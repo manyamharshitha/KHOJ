@@ -42,7 +42,22 @@ export async function buildApp(opts: { dialer?: Dialer } = {}): Promise<BuiltApp
     bodyLimit: 2 * 1024 * 1024,
   });
 
-  await app.register(cors, { origin: true });
+  const frontendOrigins = (process.env.FRONTEND_URL ?? 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  await app.register(cors, {
+    origin: (origin, callback) => {
+      if (!origin || frontendOrigins.includes(origin) || frontendOrigins.includes('*')) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error('CORS origin not allowed'), false);
+    },
+    credentials: true,
+  });
+
   await app.register(authRoutes);
   await app.register(runRoutes);
   await app.register(callRoutes);
