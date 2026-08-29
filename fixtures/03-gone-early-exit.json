@@ -1,0 +1,12 @@
+{
+  "name": "flat already rented — the fifteen-second early exit",
+  "outcome": "completed",
+  "consentRecord": true,
+  "turns": [
+    { "who": "agent", "text": "Hello — I'm an AI assistant calling for a tenant about your listing in Whitefield. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?", "tStartMs": 0, "tEndMs": 8100 },
+    { "who": "broker", "text": "Okay.", "tStartMs": 8500, "tEndMs": 9100 },
+    { "who": "agent", "text": "When can she come and see the flat?", "tStartMs": 9400, "tEndMs": 11600 },
+    { "who": "broker", "text": "Sorry, that flat is rented out already. Tenant moved in on the first.", "tStartMs": 12000, "tEndMs": 16300 },
+    { "who": "agent", "text": "Understood, thank you for your time.", "tStartMs": 16600, "tEndMs": 18400 }
+  ]
+}

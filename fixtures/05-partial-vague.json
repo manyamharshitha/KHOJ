@@ -1,0 +1,18 @@
+{
+  "name": "vague broker — most fields must stay null",
+  "outcome": "completed",
+  "consentRecord": true,
+  "turns": [
+    { "who": "agent", "text": "Hello — I'm an AI assistant calling for a tenant about your listing in Hinjewadi. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?", "tStartMs": 0, "tEndMs": 8200 },
+    { "who": "broker", "text": "Haan, but I am driving, make it fast.", "tStartMs": 8600, "tEndMs": 10900 },
+    { "who": "agent", "text": "When can she come and see the flat?", "tStartMs": 11200, "tEndMs": 13400 },
+    { "who": "broker", "text": "Let me check with owner and call back. Should be okay I think.", "tStartMs": 13800, "tEndMs": 18100 },
+    { "who": "agent", "text": "What's the rent and the deposit right now?", "tStartMs": 18400, "tEndMs": 20800 },
+    { "who": "broker", "text": "Rent is negotiable, depends on the party. Deposit also we can discuss.", "tStartMs": 21200, "tEndMs": 26100 },
+    { "who": "agent", "text": "Is there a brokerage on top, and how much?", "tStartMs": 26400, "tEndMs": 28800 },
+    { "who": "broker", "text": "One month, that is fixed.", "tStartMs": 29100, "tEndMs": 30900 },
+    { "who": "agent", "text": "Is non-veg allowed in the building?", "tStartMs": 31200, "tEndMs": 33400 },
+    { "who": "broker", "text": "I have to ask the society. Listen, I am driving, call me later.", "tStartMs": 33800, "tEndMs": 38200 },
+    { "who": "agent", "text": "Understood, thank you for your time.", "tStartMs": 38500, "tEndMs": 40300 }
+  ]
+}
