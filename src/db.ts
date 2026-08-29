@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { config } from './config.js';
+import { assessListing } from './core/authenticity.js';
 import type {
   Brief, CallStatus, Evidence, Extraction, FieldName,
   ListingInput, ResultRow, Turn, Verdict,
@@ -14,12 +15,32 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id           TEXT PRIMARY KEY,
+  google_sub   TEXT NOT NULL UNIQUE,
+  email        TEXT NOT NULL,
+  name         TEXT,
+  picture      TEXT,
+  created_at   TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+
+-- Tokens are stored hashed, so a stolen database does not hand over live logins.
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_sessions_user ON sessions(user_id);
+
 CREATE TABLE IF NOT EXISTS runs (
   id            TEXT PRIMARY KEY,
   created_at    TEXT NOT NULL,
   status        TEXT NOT NULL,
   brief_json    TEXT NOT NULL,
   caller_number TEXT,
+  user_id       TEXT REFERENCES users(id),
   total         INTEGER NOT NULL DEFAULT 0,
   finished      INTEGER NOT NULL DEFAULT 0
 );
@@ -89,6 +110,12 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS ix_events_run ON events(run_id, id);
 `);
 
+// Older databases predate ownership. ALTER is the whole migration.
+const runCols = db.prepare('PRAGMA table_info(runs)').all() as { name: string }[];
+if (!runCols.some((c) => c.name === 'user_id')) {
+  db.exec('ALTER TABLE runs ADD COLUMN user_id TEXT REFERENCES users(id)');
+}
+
 const now = () => new Date().toISOString();
 const bool = (v: number | null): boolean | null => (v === null ? null : v === 1);
 const int = (v: boolean | null | undefined): number | null =>
@@ -99,11 +126,16 @@ export const id = (prefix: string): string =>
 
 /* ------------------------------------------------------------------ runs */
 
-export function createRun(brief: Brief, listings: ListingInput[], callerNumber: string) {
+export function createRun(
+  brief: Brief,
+  listings: ListingInput[],
+  callerNumber: string,
+  userId: string | null = null,
+) {
   const runId = id('run');
   const insertRun = db.prepare(
-    `INSERT INTO runs (id, created_at, status, brief_json, caller_number, total)
-     VALUES (?, ?, 'queued', ?, ?, ?)`,
+    `INSERT INTO runs (id, created_at, status, brief_json, caller_number, user_id, total)
+     VALUES (?, ?, 'queued', ?, ?, ?, ?)`,
   );
   const insertListing = db.prepare(
     `INSERT INTO listings (id, run_id, ext_ref, phone_e164, rent_listed, locality, source_url)
@@ -114,7 +146,7 @@ export function createRun(brief: Brief, listings: ListingInput[], callerNumber: 
   );
 
   db.transaction(() => {
-    insertRun.run(runId, now(), JSON.stringify(brief), callerNumber, listings.length);
+    insertRun.run(runId, now(), JSON.stringify(brief), callerNumber, userId, listings.length);
     for (const l of listings) {
       const listingId = id('lst');
       insertListing.run({
@@ -389,6 +421,12 @@ export function getRows(runId: string): ResultRow[] {
       status: r.status, durationSec: r.duration_sec,
       consentRecord: bool(r.consent_record), recordingUrl: r.recording_url,
       error: r.error, extraction, rentDelta,
+      assessment: assessListing({
+        extraction,
+        rentListed: r.rent_listed,
+        status: r.status as ResultRow['status'],
+        durationSec: r.duration_sec,
+      }),
     };
   });
 }
@@ -409,3 +447,13 @@ export const eventsSince = (runId: string, sinceId: number) =>
     `SELECT id, kind, payload, at FROM events WHERE run_id = ? AND id > ? ORDER BY id ASC`,
   ).all(runId, sinceId) as
     { id: number; kind: string; payload: string | null; at: string }[];
+
+
+/**
+ * Who owns this run. Null for runs created before sign-in existed, or while
+ * AUTH_REQUIRED is off — those stay readable by anyone, which is what keeps the
+ * demo and the tests working.
+ */
+export const runOwner = (runId: string): string | null =>
+  ((db.prepare('SELECT user_id FROM runs WHERE id = ?').get(runId) as
+    { user_id: string | null } | undefined)?.user_id) ?? null;

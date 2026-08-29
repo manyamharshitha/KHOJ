@@ -3,20 +3,106 @@
   "outcome": "completed",
   "consentRecord": true,
   "turns": [
-    { "who": "agent", "text": "Hello — I'm an AI assistant calling for a tenant about your listing in Kondapur. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?", "tStartMs": 0, "tEndMs": 8200 },
-    { "who": "broker", "text": "Haan haan, fine, tell me.", "tStartMs": 8600, "tEndMs": 10100 },
-    { "who": "agent", "text": "When can she come and see the flat?", "tStartMs": 10400, "tEndMs": 12600 },
-    { "who": "broker", "text": "Anytime, today evening also possible. After six is best, the current tenant has already moved out.", "tStartMs": 13000, "tEndMs": 18400 },
-    { "who": "agent", "text": "What's the rent and the deposit right now?", "tStartMs": 18800, "tEndMs": 21200 },
-    { "who": "broker", "text": "Rent is thirty-two thousand, deposit three months. Listing is showing twenty-eight but that was old, owner increased it.", "tStartMs": 21600, "tEndMs": 29400 },
-    { "who": "agent", "text": "So thirty-two thousand rent and three months deposit — correct?", "tStartMs": 29700, "tEndMs": 33100 },
-    { "who": "broker", "text": "Correct, thirty-two thousand.", "tStartMs": 33400, "tEndMs": 35200 },
-    { "who": "agent", "text": "Is there a brokerage on top, and how much?", "tStartMs": 35500, "tEndMs": 38000 },
-    { "who": "broker", "text": "One month brokerage, standard.", "tStartMs": 38400, "tEndMs": 40300 },
-    { "who": "agent", "text": "Is non-veg allowed in the building?", "tStartMs": 40600, "tEndMs": 42800 },
-    { "who": "broker", "text": "Non-veg no problem, this building is mixed.", "tStartMs": 43100, "tEndMs": 45900 },
-    { "who": "agent", "text": "Does the owner rent to bachelors, or is it family only?", "tStartMs": 46200, "tEndMs": 49400 },
-    { "who": "broker", "text": "Owner prefers family, but working women he is okay with. Bachelors, boys, that he will not do.", "tStartMs": 49800, "tEndMs": 55600 },
-    { "who": "agent", "text": "That's everything, thank you. She'll call you back directly if it fits.", "tStartMs": 55900, "tEndMs": 59400 }
-  ]
+    {
+      "who": "agent",
+      "text": "Hello — I'm an AI assistant calling for a tenant about your listing in Kondapur. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?",
+      "tStartMs": 0,
+      "tEndMs": 8200
+    },
+    {
+      "who": "broker",
+      "text": "Haan haan, fine, tell me.",
+      "tStartMs": 8600,
+      "tEndMs": 10100
+    },
+    {
+      "who": "agent",
+      "text": "When can she come and see the flat?",
+      "tStartMs": 10400,
+      "tEndMs": 12600
+    },
+    {
+      "who": "broker",
+      "text": "Anytime, today evening also possible. After six is best, the current tenant has already moved out.",
+      "tStartMs": 13000,
+      "tEndMs": 18400
+    },
+    {
+      "who": "agent",
+      "text": "What's the rent and the deposit right now?",
+      "tStartMs": 18800,
+      "tEndMs": 21200
+    },
+    {
+      "who": "broker",
+      "text": "Rent is thirty-two thousand, deposit three months. Listing is showing twenty-eight but that was old, owner increased it.",
+      "tStartMs": 21600,
+      "tEndMs": 29400
+    },
+    {
+      "who": "agent",
+      "text": "So thirty-two thousand rent and three months deposit — correct?",
+      "tStartMs": 29700,
+      "tEndMs": 33100
+    },
+    {
+      "who": "broker",
+      "text": "Correct, thirty-two thousand.",
+      "tStartMs": 33400,
+      "tEndMs": 35200
+    },
+    {
+      "who": "agent",
+      "text": "Is there a brokerage on top, and how much?",
+      "tStartMs": 35500,
+      "tEndMs": 38000
+    },
+    {
+      "who": "broker",
+      "text": "One month brokerage, standard.",
+      "tStartMs": 38400,
+      "tEndMs": 40300
+    },
+    {
+      "who": "agent",
+      "text": "Is non-veg allowed in the building?",
+      "tStartMs": 40600,
+      "tEndMs": 42800
+    },
+    {
+      "who": "broker",
+      "text": "Non-veg no problem, this building is mixed.",
+      "tStartMs": 43100,
+      "tEndMs": 45900
+    },
+    {
+      "who": "agent",
+      "text": "Does the owner rent to bachelors, or is it family only?",
+      "tStartMs": 46200,
+      "tEndMs": 49400
+    },
+    {
+      "who": "broker",
+      "text": "Owner prefers family, but working women he is okay with. Bachelors, boys, that he will not do.",
+      "tStartMs": 49800,
+      "tEndMs": 55600
+    },
+    {
+      "who": "agent",
+      "text": "That's everything, thank you. She'll call you back directly if it fits.",
+      "tStartMs": 55900,
+      "tEndMs": 59400
+    }
+  ],
+  "result": {
+    "available": "yes",
+    "bait_pivot": "unknown",
+    "rent_actual": "32000",
+    "deposit_months": "3",
+    "brokerage_months": "1",
+    "non_veg_allowed": "yes",
+    "tenant_profile": "working_women_ok",
+    "consent_to_record": "yes",
+    "notes": ""
+  }
 }

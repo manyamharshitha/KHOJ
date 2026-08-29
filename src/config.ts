@@ -41,12 +41,27 @@ export const config = {
   dbPath: process.env.DB_PATH ?? './data/broker.db',
 
   anthropicKey: process.env.ANTHROPIC_API_KEY ?? '',
+
+  /** Google sign-in. Without a client id the sign-in endpoint refuses outright. */
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? '',
+  /** When false (default) the API stays open, so the demo and tests keep working. */
+  authRequired: process.env.AUTH_REQUIRED === '1',
+  /** Fixed token that stands in for a session in tests. Empty disables it. */
+  devAuthToken: process.env.DEV_AUTH_TOKEN ?? '',
+
   calleKey: process.env.CALLE_API_KEY ?? '',
+  calleBaseUrl: process.env.CALLE_BASE_URL ?? 'https://api.heycall-e.com',
+  /** Recipient routing/compliance hints sent with every CALL-E call. */
+  callRegion: process.env.CALL_REGION ?? 'IN',
+  callLocale: process.env.CALL_LOCALE ?? 'en-IN',
   calleWebhookSecret: process.env.CALLE_WEBHOOK_SECRET ?? 'dev-secret',
   callerId: process.env.CALLER_ID_E164 ?? '',
 
   maxConcurrent: num(process.env.MAX_CONCURRENT, 5),
   maxListingsPerRun: num(process.env.MAX_LISTINGS_PER_RUN, 40),
+  /** URLs read per request. Small on purpose: this is not a crawler. */
+  maxSourcesPerRequest: num(process.env.MAX_SOURCES_PER_REQUEST, 10),
+  sourceTimeoutMs: num(process.env.SOURCE_TIMEOUT_MS, 15_000),
 
   /** TRAI-friendly windows, IST. Two blocks a day. */
   callWindowsIST: parseWindows(process.env.CALL_WINDOWS_IST) ?? [

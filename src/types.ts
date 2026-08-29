@@ -89,6 +89,11 @@ export interface ResultRow {
   extraction: Extraction | null;
   /** rentActual - rentListed. Null unless both are known. */
   rentDelta: number | null;
+  /**
+   * How well the broker's own answers hold together. Not proof the flat exists
+   * — see src/core/authenticity.ts for what this does and does not claim.
+   */
+  assessment: import('./core/authenticity.js').Assessment | null;
 }
 
 export interface RunSummary {
@@ -120,4 +125,10 @@ export interface DialerWebhookBody {
   durationSec?: number | null;
   consentRecord?: boolean | null;
   error?: string | null;
+  /**
+   * Fields the dialer extracted itself. CALL-E does this from the
+   * `recipient_result_schema` we send, which is why the core pipeline needs no
+   * LLM key of its own. Null when the dialer offers nothing.
+   */
+  structuredResult?: (ExtractedFields & { notes: string | null }) | null;
 }

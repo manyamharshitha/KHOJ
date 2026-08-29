@@ -3,12 +3,58 @@
   "outcome": "completed",
   "consentRecord": true,
   "turns": [
-    { "who": "agent", "text": "Hello — I'm an AI assistant calling for a tenant about your listing in Gachibowli. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?", "tStartMs": 0, "tEndMs": 8300 },
-    { "who": "broker", "text": "Yes yes, tell me madam.", "tStartMs": 8700, "tEndMs": 10200 },
-    { "who": "agent", "text": "When can she come and see the flat?", "tStartMs": 10500, "tEndMs": 12700 },
-    { "who": "broker", "text": "That one, actually, see — I have a much better one in the same area. Two BHK, brand new building, I can show that one today itself. Very good property.", "tStartMs": 13100, "tEndMs": 21800 },
-    { "who": "agent", "text": "I'm asking specifically about the flat in the listing. Is that one available to see?", "tStartMs": 22100, "tEndMs": 26400 },
-    { "who": "broker", "text": "That one is gone, madam, party finalised last week. But the other one I told you, same budget only, come and see.", "tStartMs": 26800, "tEndMs": 33600 },
-    { "who": "agent", "text": "Understood, thank you. She'll call you back directly if she wants to look at others.", "tStartMs": 33900, "tEndMs": 38200 }
-  ]
+    {
+      "who": "agent",
+      "text": "Hello — I'm an AI assistant calling for a tenant about your listing in Gachibowli. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?",
+      "tStartMs": 0,
+      "tEndMs": 8300
+    },
+    {
+      "who": "broker",
+      "text": "Yes yes, tell me madam.",
+      "tStartMs": 8700,
+      "tEndMs": 10200
+    },
+    {
+      "who": "agent",
+      "text": "When can she come and see the flat?",
+      "tStartMs": 10500,
+      "tEndMs": 12700
+    },
+    {
+      "who": "broker",
+      "text": "That one, actually, see — I have a much better one in the same area. Two BHK, brand new building, I can show that one today itself. Very good property.",
+      "tStartMs": 13100,
+      "tEndMs": 21800
+    },
+    {
+      "who": "agent",
+      "text": "I'm asking specifically about the flat in the listing. Is that one available to see?",
+      "tStartMs": 22100,
+      "tEndMs": 26400
+    },
+    {
+      "who": "broker",
+      "text": "That one is gone, madam, party finalised last week. But the other one I told you, same budget only, come and see.",
+      "tStartMs": 26800,
+      "tEndMs": 33600
+    },
+    {
+      "who": "agent",
+      "text": "Understood, thank you. She'll call you back directly if she wants to look at others.",
+      "tStartMs": 33900,
+      "tEndMs": 38200
+    }
+  ],
+  "result": {
+    "available": "no",
+    "bait_pivot": "yes",
+    "rent_actual": "",
+    "deposit_months": "",
+    "brokerage_months": "",
+    "non_veg_allowed": "unknown",
+    "tenant_profile": "unknown",
+    "consent_to_record": "yes",
+    "notes": ""
+  }
 }

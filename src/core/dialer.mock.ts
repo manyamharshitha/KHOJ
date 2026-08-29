@@ -1,11 +1,18 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../config.js';
+import { mapStructuredResult } from './calleMapper.js';
 import type { DialerWebhookBody, Turn } from '../types.js';
 import type { Dialer, PlaceCallRequest } from './dialer.js';
 
 interface Fixture {
   name: string;
+  /**
+   * The structured result CALL-E would return for this transcript, in CALL-E's
+   * own snake_case shape. Keeping it here means an offline run exercises the
+   * real path — dialer-supplied fields, no LLM call — instead of a stub.
+   */
+  result?: Record<string, unknown>;
   /** completed | no_answer | busy | declined */
   outcome: DialerWebhookBody['status'];
   consentRecord?: boolean | null;
@@ -94,6 +101,9 @@ export class MockDialer implements Dialer {
         durationSec: Math.round(realMs / 1000),
         recordingUrl: fixture ? `mock://recording/${req.callId}.mp3` : null,
         consentRecord: fixture ? (fixture.consentRecord ?? true) : null,
+        structuredResult: fixture?.result
+          ? mapStructuredResult(fixture.result)
+          : null,
         error: status === 'failed' ? 'no fixture available' : null,
       };
       void this.deliver(body);

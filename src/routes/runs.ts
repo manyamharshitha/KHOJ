@@ -5,6 +5,7 @@ import { backlog, subscribe } from '../core/events.js';
 import { toE164 } from '../core/guardrails.js';
 import { pauseRun, startRun } from '../core/orchestrator.js';
 import { rankRows, summarise } from '../core/rank.js';
+import { requireUser } from './auth.js';
 import type { Brief, ListingInput, RunSummary } from '../types.js';
 
 interface CreateRunBody {
@@ -14,7 +15,31 @@ interface CreateRunBody {
 }
 
 export async function runRoutes(app: FastifyInstance) {
+  /**
+   * A run belongs to whoever created it. When AUTH_REQUIRED is off this is
+   * always null and everything stays open — the switch is what turns the
+   * ownership checks below from cosmetic into real.
+   */
+  const ownsRun = (
+    req: Parameters<typeof requireUser>[0],
+    reply: Parameters<typeof requireUser>[1],
+    runId: string,
+  ): boolean => {
+    if (!config.authRequired) return true;
+    const user = requireUser(req, reply);
+    if (!user) return false;
+    const owner = db.runOwner(runId);
+    if (owner && owner !== user.id) {
+      // 404, not 403: a stranger should not learn that this run id exists.
+      reply.code(404).send({ error: 'no such run' });
+      return false;
+    }
+    return true;
+  };
+
   app.post<{ Body: CreateRunBody }>('/api/runs', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (config.authRequired && !user) return reply;
     const { brief, listings, callerNumber } = req.body ?? ({} as CreateRunBody);
 
     if (!brief?.city || typeof brief.rentCeiling !== 'number') {
@@ -44,12 +69,15 @@ export async function runRoutes(app: FastifyInstance) {
       normalised.push({ ...l, phone: e164 });
     }
 
-    const runId = db.createRun(brief, normalised, callerNumber ?? config.callerId);
+    const runId = db.createRun(
+      brief, normalised, callerNumber ?? config.callerId, user?.id ?? null,
+    );
     void startRun(runId);
     return reply.code(201).send({ runId, queued: normalised.length });
   });
 
   app.get<{ Params: { id: string } }>('/api/runs/:id', async (req, reply) => {
+    if (!ownsRun(req, reply, req.params.id)) return reply;
     const row = db.getRunRow(req.params.id);
     if (!row) return reply.code(404).send({ error: 'no such run' });
 
@@ -67,6 +95,7 @@ export async function runRoutes(app: FastifyInstance) {
   });
 
   app.get<{ Params: { id: string } }>('/api/runs/:id/events', async (req, reply) => {
+    if (!ownsRun(req, reply, req.params.id)) return reply;
     const runId = req.params.id;
     if (!db.getRunRow(runId)) return reply.code(404).send({ error: 'no such run' });
 
@@ -95,12 +124,14 @@ export async function runRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Params: { id: string } }>('/api/runs/:id/pause', async (req, reply) => {
+    if (!ownsRun(req, reply, req.params.id)) return reply;
     if (!db.getRunRow(req.params.id)) return reply.code(404).send({ error: 'no such run' });
     await pauseRun(req.params.id);
     return { ok: true, status: 'paused' };
   });
 
   app.post<{ Params: { id: string } }>('/api/runs/:id/resume', async (req, reply) => {
+    if (!ownsRun(req, reply, req.params.id)) return reply;
     const row = db.getRunRow(req.params.id);
     if (!row) return reply.code(404).send({ error: 'no such run' });
     if (row.status === 'done') return reply.code(409).send({ error: 'run already finished' });
@@ -109,6 +140,7 @@ export async function runRoutes(app: FastifyInstance) {
   });
 
   app.get<{ Params: { id: string } }>('/api/runs/:id/export.csv', async (req, reply) => {
+    if (!ownsRun(req, reply, req.params.id)) return reply;
     if (!db.getRunRow(req.params.id)) return reply.code(404).send({ error: 'no such run' });
     const rows = rankRows(db.getRows(req.params.id));
 

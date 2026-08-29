@@ -7,9 +7,11 @@ import { MockDialer } from './core/dialer.mock.js';
 import { assertScriptCompliance } from './core/guardrails.js';
 import type { Dialer } from './core/dialer.js';
 import { setDialer, startStuckSweeper } from './core/orchestrator.js';
+import { authRoutes } from './routes/auth.js';
 import { callRoutes } from './routes/calls.js';
 import { listingRoutes } from './routes/listings.js';
 import { runRoutes } from './routes/runs.js';
+import { sourceRoutes } from './routes/sources.js';
 import { webhookRoutes } from './routes/webhooks.js';
 
 export function dialerFor(name: string): Dialer {
@@ -41,9 +43,11 @@ export async function buildApp(opts: { dialer?: Dialer } = {}): Promise<BuiltApp
   });
 
   await app.register(cors, { origin: true });
+  await app.register(authRoutes);
   await app.register(runRoutes);
   await app.register(callRoutes);
   await app.register(listingRoutes);
+  await app.register(sourceRoutes);
   await app.register(webhookRoutes);
 
   app.get('/api/health', async () => ({

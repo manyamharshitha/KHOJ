@@ -263,3 +263,115 @@ export async function extractFromTranscript(
     rejected,
   };
 }
+
+/**
+ * Builds an Extraction from fields the dialer already extracted.
+ *
+ * CALL-E returns values but not the words they came from. Numbers are the
+ * fields worth proving, so for each one we look for the broker turn that
+ * actually contains it and attach that turn as evidence. A field with no
+ * locatable source keeps its value — the dialer's schema validated it — but
+ * carries no quote, and the UI can show it as unsourced.
+ *
+ * No API key, no network call. This is the path a live CALL-E run takes.
+ */
+export function fromDialerResult(
+  callId: string,
+  fields: ExtractedFields & { notes: string | null },
+  turns: Turn[],
+  brief: Brief,
+  callStatus: CallStatus,
+): Extraction {
+  const brokerTurns = turns.filter((t) => t.who === 'broker');
+  const evidence: Partial<Record<FieldName, Evidence>> = {};
+
+  /** Find the broker turn that states this number, in digits or in words. */
+  const findNumeric = (value: number): Turn | undefined => {
+    const digits = String(value);
+    const compact = digits.replace(/000$/, 'k');
+    const words = numberWords(value);
+    return brokerTurns.find((t) => {
+      const n = normalise(t.text);
+      const bare = n.replace(/\s/g, '');
+      return bare.includes(digits)
+        || n.includes(compact)
+        || (words !== null && n.includes(words));
+    });
+  };
+
+  const attach = (name: FieldName, turn: Turn | undefined) => {
+    if (!turn) return;
+    evidence[name] = {
+      quote: turn.text,
+      tStartMs: turn.tStartMs,
+      tEndMs: turn.tEndMs,
+    };
+  };
+
+  if (fields.rentActual !== null) attach('rentActual', findNumeric(fields.rentActual));
+  if (fields.depositMonths !== null) attach('depositMonths', findNumeric(fields.depositMonths));
+  if (fields.brokerageMonths !== null) {
+    attach('brokerageMonths', findNumeric(fields.brokerageMonths));
+  }
+
+  // The categorical fields are matched on the vocabulary a broker actually uses.
+  const keywordEvidence: [FieldName, RegExp][] = [
+    ['available', /\b(available|anytime|today|tomorrow|come|see|visit|vacant|moved out|gone|taken|rented)\b/],
+    ['baitPivot', /\b(another|other one|better|different|same area|instead|show you)\b/],
+    ['nonVegAllowed', /\b(non ?veg|nonveg|veg|meat|chicken|pure veg)\b/],
+    ['tenantProfile', /\b(family|bachelor|bachelors|working|women|girls|boys)\b/],
+  ];
+  for (const [name, re] of keywordEvidence) {
+    if (fields[name] === null) continue;
+    attach(name, brokerTurns.find((t) => re.test(normalise(t.text))));
+  }
+
+  const core: ExtractedFields = {
+    available: fields.available,
+    baitPivot: fields.baitPivot,
+    rentActual: fields.rentActual,
+    depositMonths: fields.depositMonths,
+    brokerageMonths: fields.brokerageMonths,
+    nonVegAllowed: fields.nonVegAllowed,
+    tenantProfile: fields.tenantProfile,
+    extraAnswer: fields.extraAnswer,
+  };
+
+  return {
+    callId,
+    model: 'calle:recipient_result_schema',
+    extractedAt: new Date().toISOString(),
+    ...core,
+    notes: fields.notes,
+    fieldsPresent: countFieldsPresent(core),
+    evidence,
+    verdict: decideVerdict(core, brief, callStatus),
+  };
+}
+
+/** "thirty-two thousand" for 32000, so a spoken rent can be located. */
+function numberWords(n: number): string | null {
+  const ones = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
+    'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+    'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+  const tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy',
+    'eighty', 'ninety'];
+
+  const under100 = (v: number): string | null => {
+    if (v < 20) return ones[v] ?? null;
+    if (v < 100) {
+      const t = tens[Math.floor(v / 10)];
+      const o = v % 10;
+      if (!t) return null;
+      return o ? `${t} ${ones[o]}` : t;
+    }
+    return null;
+  };
+
+  if (n < 100) return under100(n);
+  if (n % 1000 === 0 && n < 100000) {
+    const thousands = under100(n / 1000);
+    return thousands ? `${thousands} thousand` : null;
+  }
+  return null;
+}

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { acceptFields, normalise } from '../src/core/extract.js';
+import { acceptFields, fromDialerResult, normalise } from '../src/core/extract.js';
+import { fromCalleEvent, isCalleEvent } from '../src/core/calleMapper.js';
+import { assessListing } from '../src/core/authenticity.js';
+import { fetchSource, htmlToText } from '../src/core/sources.js';
+import type { CalleWebhookEvent } from '../src/core/calleMapper.js';
 import { extractPhoneCandidates, parseListings } from '../src/core/parseListings.js';
 import {
   assertScriptCompliance, insideCallingWindow, isWithinWindows, istMinutes, toE164,
@@ -266,7 +270,8 @@ describe('countFieldsPresent', () => {
 const row = (over: Partial<ResultRow> & { callId: string }): ResultRow => ({
   listingId: 'l', extRef: null, phone: '+919876543210', locality: null,
   rentListed: null, status: 'completed', durationSec: 30, consentRecord: true,
-  recordingUrl: null, error: null, extraction: null, rentDelta: null, ...over,
+  recordingUrl: null, error: null, extraction: null, rentDelta: null,
+  assessment: null, ...over,
 });
 
 const ext = (verdict: ResultRow['extraction'] extends null ? never : string, rent: number | null, present = 5) =>
@@ -379,5 +384,265 @@ describe('parseListings without a key', () => {
     const res = await parseListings('just some notes, no numbers here');
     assert.equal(res.listings.length, 0);
     assert.match(res.note ?? '', /No phone numbers/);
+  });
+});
+
+/* ------------------------------------------------------- CALL-E translation */
+
+describe('CALL-E webhook mapping', () => {
+  const event = (over: Record<string, unknown> = {}): CalleWebhookEvent => ({
+    id: 'evt_1',
+    type: 'call.completed' as const,
+    created_at: '2026-09-10T12:00:00Z',
+    data: {
+      id: 'task_abc',
+      status: 'completed' as const,
+      metadata: { callId: 'cal_1', runId: 'run_1' },
+      structured_result: null,
+      summary: null,
+      failure_code: null,
+      failure_message: null,
+      completed_at: '2026-09-10T12:01:00Z',
+      recipients: [{
+        id: 'rcp_1',
+        phones: ['+919876543210'],
+        status: 'completed',
+        summary: null,
+        structured_result: {
+          available: 'yes', bait_pivot: 'no', rent_actual: '32000',
+          deposit_months: '3', brokerage_months: '1', non_veg_allowed: 'yes',
+          tenant_profile: 'working_women_ok', consent_to_record: 'yes',
+          notes: 'Owner prefers family.',
+        },
+        attempts: [{
+          id: 'att_1', phone: '+919876543210', status: 'completed',
+          started_at: '2026-09-10T12:00:00Z', completed_at: '2026-09-10T12:00:57Z',
+          summary: null, provider_call_id: 'pc_1',
+          failure_code: null, failure_message: null,
+          transcript_turns: [
+            { offset_seconds: 0, speaker: 'bot', text: 'Hello, is that alright?' },
+            { offset_seconds: 9, speaker: 'user', text: 'Haan, tell me.' },
+            { offset_seconds: 21, speaker: 'user', text: 'Rent is thirty-two thousand, deposit three months.' },
+          ],
+        }],
+      }],
+      ...over,
+    },
+  });
+
+  it('maps a completed call, including the timings', () => {
+    const b = fromCalleEvent(event())!;
+    assert.equal(b.callId, 'cal_1');
+    assert.equal(b.providerCallId, 'task_abc');
+    assert.equal(b.status, 'completed');
+    assert.equal(b.durationSec, 57);
+    assert.equal(b.consentRecord, true);
+    assert.equal(b.turns?.length, 3);
+  });
+
+  it('calls the bot the agent and the human the broker', () => {
+    const b = fromCalleEvent(event())!;
+    assert.equal(b.turns?.[0]?.who, 'agent');
+    assert.equal(b.turns?.[1]?.who, 'broker');
+  });
+
+  it('converts second offsets to milliseconds and closes each turn at the next', () => {
+    const turns = fromCalleEvent(event())!.turns!;
+    assert.equal(turns[0]?.tStartMs, 0);
+    assert.equal(turns[0]?.tEndMs, 9000, 'ends where the next turn starts');
+    assert.equal(turns[2]?.tStartMs, 21000);
+    assert.equal(turns[2]?.tEndMs, 25000, 'last turn gets a nominal 4s tail');
+  });
+
+  it('types the structured result without inventing anything', () => {
+    const r = fromCalleEvent(event())!.structuredResult!;
+    assert.equal(r.available, true);
+    assert.equal(r.baitPivot, false);
+    assert.equal(r.rentActual, 32000);
+    assert.equal(r.depositMonths, 3);
+    assert.equal(r.tenantProfile, 'working_women_ok');
+  });
+
+  it('turns "unknown" and empty strings into null, never a guess', () => {
+    const e = event();
+    e.data.recipients![0]!.structured_result = {
+      available: 'unknown', bait_pivot: 'unknown', rent_actual: '',
+      deposit_months: '', brokerage_months: '', non_veg_allowed: 'unknown',
+      tenant_profile: 'unknown', consent_to_record: 'unknown', notes: '',
+    };
+    const r = fromCalleEvent(e)!.structuredResult!;
+    assert.equal(r.available, null);
+    assert.equal(r.rentActual, null);
+    assert.equal(r.tenantProfile, null, '"unknown" is not a tenant profile');
+    assert.equal(r.notes, null);
+  });
+
+  it('reads a no-answer out of the failure code', () => {
+    const e = event();
+    e.data.status = 'failed' as never;
+    e.data.recipients![0]!.attempts![0]!.transcript_turns = [];
+    e.data.recipients![0]!.attempts![0]!.failure_code = 'no_answer';
+    assert.equal(fromCalleEvent(e)!.status, 'no_answer');
+  });
+
+  it('ignores a task it cannot map back to one of our calls', () => {
+    const e = event();
+    e.data.metadata = {};
+    assert.equal(fromCalleEvent(e), null);
+  });
+
+  it('recognises the envelope', () => {
+    assert.equal(isCalleEvent(event()), true);
+    assert.equal(isCalleEvent({ callId: 'x', status: 'completed' }), false);
+  });
+});
+
+describe('fromDialerResult — evidence without an API call', () => {
+  const turns: Turn[] = [
+    { who: 'agent', text: 'What is the rent?', tStartMs: 0, tEndMs: 2000 },
+    { who: 'broker', text: 'Rent is thirty-two thousand, deposit three months.', tStartMs: 2000, tEndMs: 8000 },
+    { who: 'broker', text: 'Non-veg no problem, owner prefers family.', tStartMs: 8000, tEndMs: 12000 },
+  ];
+
+  it('attaches the broker turn that states a spoken number', () => {
+    const e = fromDialerResult('c1', {
+      ...noFields(), available: true, rentActual: 32000, notes: null,
+    }, turns, brief, 'completed');
+    assert.match(e.evidence.rentActual?.quote ?? '', /thirty-two thousand/);
+    assert.equal(e.evidence.rentActual?.tStartMs, 2000);
+  });
+
+  it('never sources evidence from the agent', () => {
+    const e = fromDialerResult('c1', {
+      ...noFields(), rentActual: 32000, notes: null,
+    }, turns, brief, 'completed');
+    assert.doesNotMatch(e.evidence.rentActual?.quote ?? '', /What is the rent/);
+  });
+
+  it('keeps a value that has no locatable quote, but leaves it unsourced', () => {
+    const e = fromDialerResult('c1', {
+      ...noFields(), available: true, rentActual: 99999, notes: null,
+    }, turns, brief, 'completed');
+    assert.equal(e.rentActual, 99999, 'the dialer validated it — keep it');
+    assert.equal(e.evidence.rentActual, undefined, 'but do not claim evidence');
+  });
+
+  it('records where the fields came from', () => {
+    const e = fromDialerResult('c1', { ...noFields(), notes: null }, turns, brief, 'completed');
+    assert.match(e.model, /^calle:/);
+  });
+});
+
+/* -------------------------------------------------------- authenticity */
+
+describe('assessListing', () => {
+  const ext = (over: Partial<ExtractedFields> & { fieldsPresent?: number; evidence?: object } = {}) => ({
+    callId: 'c', model: 'm', extractedAt: '', ...noFields(),
+    notes: null, fieldsPresent: 3, evidence: {}, verdict: 'shortlist' as const,
+    ...over,
+  });
+
+  it('will not judge a call that never connected', () => {
+    const a = assessListing({ extraction: null, rentListed: 28000, status: 'no_answer', durationSec: null });
+    assert.equal(a.trust, 'unknown');
+    assert.equal(a.signals.length, 0);
+  });
+
+  it('calls a bait pivot dead even when the broker claimed it was available', () => {
+    const a = assessListing({
+      extraction: ext({ available: true, baitPivot: true }),
+      rentListed: 28000, status: 'completed', durationSec: 60,
+    });
+    assert.equal(a.trust, 'dead');
+    assert.match(a.summary, /bait/i);
+    assert.ok(a.signals.some((s) => s.id === 'bait_pivot' && s.weight < 0));
+  });
+
+  it('trusts a specific, correctly-priced listing', () => {
+    const a = assessListing({
+      extraction: ext({
+        available: true, rentActual: 28000, depositMonths: 2,
+        brokerageMonths: 1, nonVegAllowed: true, fieldsPresent: 5,
+      }),
+      rentListed: 28000, status: 'completed', durationSec: 65,
+    });
+    assert.equal(a.trust, 'verified');
+    assert.ok(a.signals.some((s) => s.id === 'rent_matches'));
+  });
+
+  it('punishes a rent far above the advert and says by how much', () => {
+    const a = assessListing({
+      extraction: ext({ available: true, rentActual: 40000, fieldsPresent: 2 }),
+      rentListed: 28000, status: 'completed', durationSec: 55,
+    });
+    assert.ok(a.signals.some((s) => s.id === 'rent_far_above'));
+    assert.match(a.signals.find((s) => s.id === 'rent_far_above')!.label, /43%/);
+    assert.notEqual(a.trust, 'verified');
+  });
+
+  it('marks a broker who commits to nothing as doubtful', () => {
+    const a = assessListing({
+      extraction: ext({ fieldsPresent: 1 }),
+      rentListed: 28000, status: 'completed', durationSec: 40,
+    });
+    assert.equal(a.trust, 'doubtful');
+    assert.ok(a.signals.some((s) => s.id === 'vague'));
+  });
+
+  it('never claims to have verified the flat itself', () => {
+    const a = assessListing({
+      extraction: ext({ available: true, rentActual: 28000, fieldsPresent: 5 }),
+      rentListed: 28000, status: 'completed', durationSec: 65,
+    });
+    // The wording must stay about what was said, not about what is true.
+    assert.doesNotMatch(a.summary, /guarantee|certified|confirmed genuine/i);
+  });
+
+  it('keeps the score inside 0-100 whatever the signals do', () => {
+    const worst = assessListing({
+      extraction: ext({ available: false, baitPivot: true, rentActual: 90000, fieldsPresent: 0 }),
+      rentListed: 20000, status: 'completed', durationSec: 5,
+    });
+    assert.ok(worst.score >= 0 && worst.score <= 100);
+  });
+});
+
+/* ------------------------------------------------------------- sources */
+
+describe('htmlToText', () => {
+  it('drops scripts and styles rather than reading them as content', () => {
+    const t = htmlToText('<style>a{color:red}</style><script>var x=9876543210</script><p>Call 9876543211</p>');
+    assert.doesNotMatch(t, /color:red/);
+    assert.doesNotMatch(t, /9876543210/, 'a number inside a script is not a broker');
+    assert.match(t, /Call 9876543211/);
+  });
+
+  it('turns block tags into line breaks so listings stay separate', () => {
+    const t = htmlToText('<li>Kondapur 9876543210</li><li>Madhapur 9876543211</li>');
+    assert.ok(t.includes('\n'));
+  });
+
+  it('decodes the entities that appear in real pages', () => {
+    assert.match(htmlToText('<p>Rent &amp; deposit&nbsp;here</p>'), /Rent & deposit here/);
+  });
+});
+
+describe('fetchSource', () => {
+  it('refuses anything that is not a URL', async () => {
+    const r = await fetchSource('not a url');
+    assert.equal(r.outcome, 'refused');
+  });
+
+  it('refuses to fetch the private network', async () => {
+    for (const u of ['http://localhost:8080/x', 'http://127.0.0.1/x', 'http://192.168.1.1/']) {
+      const r = await fetchSource(u);
+      assert.equal(r.outcome, 'refused', u);
+      assert.match(r.note, /private network/);
+    }
+  });
+
+  it('refuses non-http schemes', async () => {
+    const r = await fetchSource('file:///etc/passwd');
+    assert.equal(r.outcome, 'refused');
   });
 });

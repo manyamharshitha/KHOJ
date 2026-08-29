@@ -3,7 +3,7 @@ import * as db from '../db.js';
 import type { CallStatus, DialerWebhookBody } from '../types.js';
 import type { Dialer } from './dialer.js';
 import { emit } from './events.js';
-import { extractFromTranscript } from './extract.js';
+import { extractFromTranscript, fromDialerResult } from './extract.js';
 import { checkCall, insideCallingWindow, nextWindowOpensAt } from './guardrails.js';
 import { buildScript } from './script.js';
 
@@ -257,20 +257,47 @@ export async function handleCallResult(body: DialerWebhookBody): Promise<'ok' | 
   releaseCall(call.id);
   emit(call.run_id, call.id, 'call.answered', { durationSec: body.durationSec });
 
-  await runExtraction(call.id, call.run_id);
+  await runExtraction(call.id, call.run_id, body.structuredResult ?? null);
   db.recountFinished(call.run_id);
   return 'ok';
 }
 
 /** Extraction over a stored transcript. Safe to re-run; places no calls. */
-export async function runExtraction(callId: string, runId: string): Promise<void> {
+export async function runExtraction(
+  callId: string,
+  runId: string,
+  fromDialer?: DialerWebhookBody['structuredResult'],
+): Promise<void> {
   const turns = db.getTranscript(callId);
   const call = db.getCall(callId);
   if (!turns || !call) return;
 
+  const brief = db.getBrief(runId);
+
+  /*
+   * CALL-E extracts the fields itself from the schema we send it, so when a
+   * structured result comes back on the webhook there is nothing to ask a model
+   * for. We still walk the transcript to attach verbatim evidence quotes — the
+   * provider gives values, not the words they came from, and the words are what
+   * make a number defensible.
+   *
+   * This is the path that lets the whole pipeline run with no Anthropic key.
+   */
+  if (fromDialer) {
+    const extraction = fromDialerResult(callId, fromDialer, turns, brief, call.status);
+    db.saveExtraction(extraction);
+    emit(runId, callId, 'call.done', {
+      status: 'completed',
+      verdict: extraction.verdict,
+      fieldsPresent: extraction.fieldsPresent,
+      source: 'dialer',
+    });
+    return;
+  }
+
   try {
     const { extraction, rejected } = await extractFromTranscript(
-      callId, turns, db.getBrief(runId), call.status,
+      callId, turns, brief, call.status,
     );
     db.saveExtraction(extraction);
 
