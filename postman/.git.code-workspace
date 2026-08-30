@@ -1,0 +1,28 @@
+{
+	"folders": [
+		{
+			"path": "../../ai project/euv-optimizer/.git"
+		},
+		{
+			"path": "../../ai project/euv-optimizer/__pycache__"
+		},
+		{
+			"path": "../../ai project/euv-optimizer/ai"
+		},
+		{
+			"path": "../../ai project/euv-optimizer/deploy"
+		},
+		{
+			"path": "../../ai project/euv-optimizer/web"
+		},
+		{
+			"path": "../../ai project/euv-optimizer/data"
+		},
+		{
+			"path": "../../ai project/euv-optimizer/sample_data"
+		}
+	],
+	"settings": {
+		"liveServer.settings.multiRootWorkspaceName": "ai"
+	}
+}

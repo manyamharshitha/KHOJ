@@ -1,0 +1,599 @@
+{
+  "info": {
+    "_postman_id": "b7c1e2a4-9f31-4d2c-8a55-khoj000001",
+    "name": "KHOJ — Broker Callback API",
+    "description": "Backend API for the tenant-side broker verification agent.\n\nSetup:\n1. `npm start` in the khoj folder.\n2. Import this collection.\n3. Run the requests top to bottom (1a turns pasted text into listings you can feed to 1) — `runId` and `callId` are captured automatically.\n\nThe `baseUrl` and `webhookSecret` variables default to a local server with the shipped `.env`. Change `webhookSecret` if you changed `CALLE_WEBHOOK_SECRET`.\n\nNote: `GET /api/runs/:id/events` is a Server-Sent Events stream. Postman does not render SSE well — use a browser tab or `curl -N` for that one.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "webhookSecret",
+      "value": "dev-secret",
+      "type": "string"
+    },
+    {
+      "key": "runId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "callId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "parsedListings",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "0 · Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "health"
+          ]
+        },
+        "description": "Confirms the server is up and tells you which dialer is active. Check this before demoing — it is how you avoid running the mock when you meant to run live calls."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('server is up', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('reports a dialer', () => pm.expect(j.dialer).to.be.oneOf(['mock','manual','calle']));",
+              "console.log('dialer =', j.dialer, '· model =', j.model);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "1a · Parse pasted listings",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/listings/parse",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "listings",
+            "parse"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"text\": \"Hi, saw these on 99acres and a friend sent a few:\\n\\n2BHK Kondapur, 28,000 + 3 months deposit. Broker Ramesh 9876543210\\nGachibowli 3BHK - asking 30000 - +91 98765 43211 (Suresh)\\nMadhapur, ask for Latha: 098765-43212, rent 26k, no brokerage\\nOffice landline 040-23456789 - don't call this one\\nAlso 98765 43213 in Kothrud, she said 24,000 negotiable\\nAvailable from 2026-09-14, budget max 35000\"\n}"
+        },
+        "description": "Paste anything - a portal copy-paste, a WhatsApp forward, your own notes - and get back listings shaped for POST /api/runs. Feed the `listings` array straight into request 1.\n\nThe phone numbers come from a deterministic scan, never from the model: a wrong number means calling a stranger. The model only attaches rent and locality to numbers already found in your text, and any number it returns that is not in the text is dropped.\n\nThis sample deliberately includes a landline, four rents and a date. Expect exactly four mobiles and none of the noise.\n\nWithout ANTHROPIC_API_KEY you still get every number, with `enriched: false` - a paste is never wasted."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('found the four mobiles', () => pm.expect(j.listings).to.have.lengthOf(4));",
+              "pm.test('skipped the landline', () => {",
+              "  const phones = j.listings.map(l => l.phone);",
+              "  pm.expect(phones).to.not.include('+914023456789');",
+              "});",
+              "pm.test('every number is dialable E.164', () => {",
+              "  j.listings.forEach(l => pm.expect(l.phone).to.match(/^\\+91[6-9]\\d{9}$/));",
+              "});",
+              "if (!j.enriched) console.log(j.note);",
+              "pm.collectionVariables.set('parsedListings', JSON.stringify(j.listings));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "1 · Create run",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/runs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "runs"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"brief\": {\n    \"city\": \"Hyderabad\",\n    \"rentCeiling\": 35000,\n    \"brokerageCeilingMonths\": 1,\n    \"vegMatters\": true,\n    \"nonVegRequired\": true,\n    \"tenantProfile\": \"working_women\",\n    \"extraQuestion\": \"Is there covered parking?\"\n  },\n  \"listings\": [\n    { \"extRef\": \"L-001\", \"phone\": \"9876543210\", \"rentListed\": 28000, \"locality\": \"Kondapur\" },\n    { \"extRef\": \"L-002\", \"phone\": \"09876543211\", \"rentListed\": 30000, \"locality\": \"Gachibowli\" },\n    { \"extRef\": \"L-003\", \"phone\": \"+91 98765 43212\", \"rentListed\": 26000, \"locality\": \"Madhapur\" },\n    { \"extRef\": \"L-004\", \"phone\": \"98765-43213\", \"rentListed\": 24000, \"locality\": \"Kothrud\" }\n  ]\n}"
+        },
+        "description": "Creates a run and starts dialling immediately.\n\nThe four phone numbers are deliberately written four different ways — bare, leading zero, spaced with +91, hyphenated. All four should normalise to E.164.\n\nCaptures `runId` into a collection variable."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const j = pm.response.json();",
+              "pm.test('returns a runId', () => pm.expect(j.runId).to.be.a('string'));",
+              "pm.test('queued all 4 listings', () => pm.expect(j.queued).to.eql(4));",
+              "pm.collectionVariables.set('runId', j.runId);",
+              "console.log('runId =', j.runId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 · Get run (ranked table)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/runs/{{runId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "runs",
+            "{{runId}}"
+          ]
+        },
+        "description": "The whole results table, already ranked: shortlist first, then cheapest, then best-evidenced.\n\nRun this a few times while a run is in flight to watch `finished` climb. Captures the first row's `callId`.\n\n`run.stats.decisive` is the completion metric — a fifteen-second confirmed-dead call counts as a success, not a failure."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('has a run and rows', () => {",
+              "  pm.expect(j.run).to.be.an('object');",
+              "  pm.expect(j.rows).to.be.an('array');",
+              "});",
+              "pm.test('phones normalised to E.164', () => {",
+              "  j.rows.forEach(r => pm.expect(r.phone).to.match(/^\\+91\\d{10}$/));",
+              "});",
+              "if (j.rows.length) {",
+              "  pm.collectionVariables.set('callId', j.rows[0].callId);",
+              "  console.log('callId =', j.rows[0].callId);",
+              "}",
+              "console.log(j.run.status, j.run.finished + '/' + j.run.total, JSON.stringify(j.run.stats));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 · Get one call (transcript + evidence)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/calls/{{callId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "calls",
+            "{{callId}}"
+          ]
+        },
+        "description": "The drill-down: full transcript with per-turn timestamps, plus the extraction.\n\nLook at `extraction.evidence` — every field carries the broker's exact words and the audio offsets they were said at. That is what makes click-a-cell-and-hear-it possible, and it is the reason a hallucinated value cannot survive: a quote that is not literally in the transcript is discarded before it ever reaches this response."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('returns the call', () => pm.expect(j.call).to.be.an('object'));",
+              "if (j.extraction) {",
+              "  pm.test('every extracted field has evidence', () => {",
+              "    const fields = ['available','rentActual','depositMonths','brokerageMonths','nonVegAllowed','tenantProfile'];",
+              "    fields.filter(f => j.extraction[f] !== null)",
+              "          .forEach(f => pm.expect(j.extraction.evidence[f], f + ' evidence').to.be.an('object'));",
+              "  });",
+              "} else {",
+              "  console.log('No extraction — set ANTHROPIC_API_KEY in .env and run request 4.');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 · Re-extract one call (no dialling)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/calls/{{callId}}/reextract",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "calls",
+            "{{callId}}",
+            "reextract"
+          ]
+        },
+        "description": "Re-runs extraction over the stored transcript. Places no call; costs one Claude request.\n\nNeeds ANTHROPIC_API_KEY. This is the extraction dev loop — change the prompt in src/core/extract.ts, hit this, see the new result."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "  const j = pm.response.json();",
+              "  pm.test('returns an extraction', () => pm.expect(j.extraction).to.be.an('object'));",
+              "  console.log('verdict =', j.extraction.verdict, '· fields =', j.extraction.fieldsPresent + '/5');",
+              "} else if (pm.response.code === 409) {",
+              "  console.log('No transcript stored for this call — pick an answered one from request 2.');",
+              "} else {",
+              "  console.log('Failed:', pm.response.text());",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 · Pause (kill switch)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/runs/{{runId}}/pause",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "runs",
+            "{{runId}}",
+            "pause"
+          ]
+        },
+        "description": "Stops the run and cancels every in-flight provider call. To see it do something, create a run with 40 listings and hit this while it is dialling."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('run is paused', () => pm.expect(pm.response.json().status).to.eql('paused'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 · Resume",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/runs/{{runId}}/resume",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "runs",
+            "{{runId}}",
+            "resume"
+          ]
+        },
+        "description": "Picks up every call still queued. State lives in SQLite, so this also recovers a run whose server process died mid-flight."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 or 409 if already finished', () => pm.expect(pm.response.code).to.be.oneOf([200, 409]));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7 · Export CSV",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/runs/{{runId}}/export.csv",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "runs",
+            "{{runId}}",
+            "export.csv"
+          ]
+        },
+        "description": "Flat CSV of the ranked table, including the evidence quotes as columns."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('is CSV', () => pm.expect(pm.response.headers.get('content-type')).to.include('text/csv'));",
+              "console.log(pm.response.text().split('\\n').slice(0, 3).join('\\n'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhook · answered call with transcript",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "x-dialer-signature",
+            "value": "{{webhookSecret}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/webhooks/dialer",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "webhooks",
+            "dialer"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"callId\": \"{{callId}}\",\n  \"providerCallId\": \"manual_{{callId}}\",\n  \"status\": \"completed\",\n  \"durationSec\": 57,\n  \"recordingUrl\": \"https://example.invalid/recording.mp3\",\n  \"consentRecord\": true,\n  \"turns\": [\n    { \"who\": \"agent\",  \"text\": \"Hello — I'm an AI assistant calling for a tenant about your listing in Kondapur. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?\", \"tStartMs\": 0, \"tEndMs\": 8200 },\n    { \"who\": \"broker\", \"text\": \"Haan haan, fine, tell me.\", \"tStartMs\": 8600, \"tEndMs\": 10100 },\n    { \"who\": \"agent\",  \"text\": \"When can she come and see the flat?\", \"tStartMs\": 10400, \"tEndMs\": 12600 },\n    { \"who\": \"broker\", \"text\": \"Anytime, today evening also possible. The current tenant has already moved out.\", \"tStartMs\": 13000, \"tEndMs\": 18400 },\n    { \"who\": \"agent\",  \"text\": \"What's the rent and the deposit right now?\", \"tStartMs\": 18800, \"tEndMs\": 21200 },\n    { \"who\": \"broker\", \"text\": \"Rent is thirty-two thousand, deposit three months. Listing is showing twenty-eight but that was old.\", \"tStartMs\": 21600, \"tEndMs\": 29400 },\n    { \"who\": \"agent\",  \"text\": \"Is there a brokerage on top, and how much?\", \"tStartMs\": 29700, \"tEndMs\": 32100 },\n    { \"who\": \"broker\", \"text\": \"One month brokerage, standard.\", \"tStartMs\": 32400, \"tEndMs\": 34300 },\n    { \"who\": \"agent\",  \"text\": \"Is non-veg allowed in the building?\", \"tStartMs\": 34600, \"tEndMs\": 36800 },\n    { \"who\": \"broker\", \"text\": \"Non-veg no problem, this building is mixed.\", \"tStartMs\": 37100, \"tEndMs\": 39900 },\n    { \"who\": \"agent\",  \"text\": \"Does the owner rent to bachelors, or is it family only?\", \"tStartMs\": 40200, \"tEndMs\": 43400 },\n    { \"who\": \"broker\", \"text\": \"Owner prefers family, but working women he is okay with.\", \"tStartMs\": 43800, \"tEndMs\": 48600 }\n  ]\n}"
+        },
+        "description": "This is exactly what CALL-E will POST when a call finishes — the mock dialer posts to this same route.\n\nTo use it, run the server with `DIALER=manual` so calls park in `dialing` instead of completing instantly. Then: create a run, GET the run to grab a `callId`, and fire this.\n\nExpect `{ ok: true, result: 'ok' }`. Then GET the call (request 3) to see the transcript and, with an API key set, the extracted fields with their evidence quotes."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "if (j.result === 'duplicate') {",
+              "  console.log('Call was not in `dialing` — it already finished. Use DIALER=manual to park calls.');",
+              "} else {",
+              "  pm.test('accepted', () => pm.expect(j.ok).to.be.true);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhook · duplicate delivery is a no-op",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "x-dialer-signature",
+            "value": "{{webhookSecret}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/webhooks/dialer",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "webhooks",
+            "dialer"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"callId\": \"{{callId}}\",\n  \"providerCallId\": \"manual_{{callId}}\",\n  \"status\": \"completed\",\n  \"durationSec\": 57,\n  \"turns\": [\n    { \"who\": \"broker\", \"text\": \"Rent is fifty thousand.\", \"tStartMs\": 0, \"tEndMs\": 2000 }\n  ]\n}"
+        },
+        "description": "Send this straight after the previous request. Providers retry webhooks, so a second delivery for the same call must not overwrite the transcript or spend a second Claude call.\n\nExpect `result: 'duplicate'`. Then GET the call again — the rent should still be thirty-two thousand, not fifty."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('rejected as duplicate', () => pm.expect(pm.response.json().result).to.eql('duplicate'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhook · no answer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "x-dialer-signature",
+            "value": "{{webhookSecret}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/webhooks/dialer",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "webhooks",
+            "dialer"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"callId\": \"{{callId}}\",\n  \"providerCallId\": \"manual_{{callId}}\",\n  \"status\": \"no_answer\",\n  \"durationSec\": 22\n}"
+        },
+        "description": "Schedules one retry, `RETRY_DELAY_MIN` minutes out. When every remaining call is waiting on a retry the run parks in `awaiting_retry` rather than spinning, and wakes itself on a timer.\n\nSet `RETRY_DELAY_MIN=1` in `.env` if you want to watch that happen without waiting half an hour."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhook · bad signature is rejected",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "x-dialer-signature",
+            "value": "wrong-secret"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/webhooks/dialer",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "webhooks",
+            "dialer"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"callId\": \"{{callId}}\",\n  \"providerCallId\": \"x\",\n  \"status\": \"completed\"\n}"
+        },
+        "description": "Anyone who can reach your tunnel can POST here. Without signature verification a stranger could inject fabricated broker answers into your results table.\n\nExpect 401."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Validation · bad phone number is rejected",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/runs",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "runs"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"brief\": { \"city\": \"Pune\", \"rentCeiling\": 30000, \"vegMatters\": false, \"tenantProfile\": \"bachelors\" },\n  \"listings\": [\n    { \"extRef\": \"OK\",  \"phone\": \"9876543210\" },\n    { \"extRef\": \"BAD\", \"phone\": \"12345\" }\n  ]\n}"
+        },
+        "description": "The whole run is rejected rather than silently dropping the bad row. A listing that vanishes without explanation is worse than an error — the seeker would never know a number was never called.\n\nExpect 400 naming listing 2."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+              "pm.test('names the offending row', () => pm.expect(pm.response.json().error).to.include('listing 2'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "name": "broker refuses recording — call continues, audio must never be published",
+  "outcome": "completed",
+  "consentRecord": false,
+  "turns": [
+    {
+      "who": "agent",
+      "text": "Hello — I'm an AI assistant calling for a tenant about your listing in Indiranagar. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?",
+      "tStartMs": 0,
+      "tEndMs": 8200
+    },
+    {
+      "who": "broker",
+      "text": "No recording. Don't record me.",
+      "tStartMs": 8600,
+      "tEndMs": 10400
+    },
+    {
+      "who": "agent",
+      "text": "No problem, I won't record. I'll ask her to call you directly instead. Thank you.",
+      "tStartMs": 10700,
+      "tEndMs": 14900
+    },
+    {
+      "who": "broker",
+      "text": "Fine, but the flat is available. Twenty-nine thousand, one month brokerage. Tell her to call.",
+      "tStartMs": 15200,
+      "tEndMs": 20600
+    },
+    {
+      "who": "agent",
+      "text": "I'll pass that on. Thank you.",
+      "tStartMs": 20900,
+      "tEndMs": 22400
+    }
+  ],
+  "result": {
+    "available": "yes",
+    "bait_pivot": "unknown",
+    "rent_actual": "29000",
+    "deposit_months": "",
+    "brokerage_months": "1",
+    "non_veg_allowed": "unknown",
+    "tenant_profile": "unknown",
+    "consent_to_record": "no",
+    "notes": ""
+  }
+}

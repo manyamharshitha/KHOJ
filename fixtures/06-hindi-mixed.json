@@ -1,0 +1,108 @@
+{
+  "name": "code-switched Hindi/English, rent spoken in mixed units",
+  "outcome": "completed",
+  "consentRecord": true,
+  "turns": [
+    {
+      "who": "agent",
+      "text": "Hello — I'm an AI assistant calling for a tenant about your listing in Andheri East. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?",
+      "tStartMs": 0,
+      "tEndMs": 8300
+    },
+    {
+      "who": "broker",
+      "text": "Haan bolo, Hindi mein bolo.",
+      "tStartMs": 8700,
+      "tEndMs": 10400
+    },
+    {
+      "who": "agent",
+      "text": "Theek hai. Flat dekhne kab aa sakte hain?",
+      "tStartMs": 10700,
+      "tEndMs": 13500
+    },
+    {
+      "who": "broker",
+      "text": "Kal shaam ko aa jao, chaar baje ke baad. Flat khaali hai abhi.",
+      "tStartMs": 13900,
+      "tEndMs": 18600
+    },
+    {
+      "who": "agent",
+      "text": "Rent aur deposit kitna hai abhi?",
+      "tStartMs": 18900,
+      "tEndMs": 21100
+    },
+    {
+      "who": "broker",
+      "text": "Rent pachattar hazaar, deposit do mahine ka. Society charges alag se.",
+      "tStartMs": 21500,
+      "tEndMs": 27200
+    },
+    {
+      "who": "agent",
+      "text": "Pachattar hazaar rent, do mahine deposit — sahi hai?",
+      "tStartMs": 27500,
+      "tEndMs": 30800
+    },
+    {
+      "who": "broker",
+      "text": "Haan, pachattar hazaar. Seventy-five thousand.",
+      "tStartMs": 31100,
+      "tEndMs": 34000
+    },
+    {
+      "who": "agent",
+      "text": "Brokerage kitna lagega?",
+      "tStartMs": 34300,
+      "tEndMs": 36000
+    },
+    {
+      "who": "broker",
+      "text": "Ek mahina, standard hai.",
+      "tStartMs": 36400,
+      "tEndMs": 38100
+    },
+    {
+      "who": "agent",
+      "text": "Non-veg allowed hai building mein?",
+      "tStartMs": 38400,
+      "tEndMs": 40600
+    },
+    {
+      "who": "broker",
+      "text": "Nahi, yeh Jain building hai, non-veg bilkul allowed nahi hai.",
+      "tStartMs": 41000,
+      "tEndMs": 45400
+    },
+    {
+      "who": "agent",
+      "text": "Owner bachelors ko dete hain, ya sirf family?",
+      "tStartMs": 45700,
+      "tEndMs": 48600
+    },
+    {
+      "who": "broker",
+      "text": "Sirf family. Bachelors ko owner nahi dega.",
+      "tStartMs": 49000,
+      "tEndMs": 52100
+    },
+    {
+      "who": "agent",
+      "text": "Bas itna hi, dhanyavaad. Woh aapko seedha call karengi.",
+      "tStartMs": 52400,
+      "tEndMs": 56000
+    }
+  ],
+  "result": {
+    "available": "yes",
+    "bait_pivot": "unknown",
+    "rent_actual": "75000",
+    "deposit_months": "2",
+    "brokerage_months": "1",
+    "non_veg_allowed": "no",
+    "tenant_profile": "family_only",
+    "consent_to_record": "yes",
+    "notes": ""
+  }
+}

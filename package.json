@@ -1,26 +1,31 @@
 {
-  "name": "khoj-frontend",
+  "name": "khoj",
+  "version": "0.1.0",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/logic.test.ts && tsx --test test/integration.test.ts && tsx --test test/auth.test.ts",
+    "demo": "tsx scripts/demo.ts",
+    "replay": "tsx scripts/replay.ts",
+    "eval": "tsx eval/score.ts",
+    "reset": "node -e \"require('fs').rmSync('data',{recursive:true,force:true});console.log('database reset')\""
   },
   "dependencies": {
-    "framer-motion": "^13.1.1",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.2",
-    "styled-components": "^6.5.3"
+    "@anthropic-ai/sdk": "^0.120.0",
+    "@fastify/cors": "^11.0.1",
+    "better-sqlite3": "^11.10.0",
+    "fastify": "^5.4.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.1.0",
-    "oxlint": "^1.79.0",
-    "vite": "^8.2.2"
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
   }
 }
