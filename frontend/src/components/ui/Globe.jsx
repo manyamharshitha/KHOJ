@@ -57,9 +57,9 @@ function RotatingGlobe() {
         <meshStandardMaterial
           map={earthTexture}
           bumpMap={bumpTexture}
-          bumpScale={0.05}
-          roughness={0.7}
-          metalness={0}
+          bumpScale={0.065}
+          roughness={0.55}
+          metalness={0.08}
         />
       </mesh>
       {MARKERS.map((m) => (
@@ -69,64 +69,20 @@ function RotatingGlobe() {
   );
 }
 
-function Atmosphere() {
-  const material = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        uniforms: {
-          atmosphereColor: { value: new THREE.Color('#4da6ff') },
-          intensity: { value: 0.55 },
-          fresnelPower: { value: 2.4 },
-        },
-        vertexShader: `
-          varying vec3 vNormal;
-          varying vec3 vPosition;
-          void main() {
-            vNormal = normalize(normalMatrix * normal);
-            vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: `
-          uniform vec3 atmosphereColor;
-          uniform float intensity;
-          uniform float fresnelPower;
-          varying vec3 vNormal;
-          varying vec3 vPosition;
-          void main() {
-            float fresnel = pow(1.0 - abs(dot(vNormal, normalize(-vPosition))), fresnelPower);
-            gl_FragColor = vec4(atmosphereColor, fresnel * intensity);
-          }
-        `,
-        side: THREE.BackSide,
-        transparent: true,
-        depthWrite: false,
-      }),
-    [],
-  );
-
-  return (
-    <mesh scale={[1.12, 1.12, 1.12]}>
-      <sphereGeometry args={[RADIUS, 64, 32]} />
-      <primitive object={material} attach="material" />
-    </mesh>
-  );
-}
-
 function Scene() {
   const { camera } = useThree();
   useEffect(() => {
-    camera.position.set(0, 0, RADIUS * 3.1);
+    camera.position.set(0, 0, RADIUS * 2.7);
     camera.lookAt(0, 0, 0);
   }, [camera]);
 
   return (
     <>
-      <ambientLight intensity={0.6} />
-      <directionalLight position={[RADIUS * 5, RADIUS * 2, RADIUS * 5]} intensity={1.4} color="#ffffff" />
-      <directionalLight position={[-RADIUS * 3, RADIUS, -RADIUS * 2]} intensity={0.4} color="#88ccff" />
+      <ambientLight intensity={0.4} />
+      <directionalLight position={[RADIUS * 5, RADIUS * 2, RADIUS * 5]} intensity={1.75} color="#fff6e8" />
+      <directionalLight position={[-RADIUS * 3, RADIUS, -RADIUS * 2]} intensity={0.3} color="#7fb0e8" />
+      <pointLight position={[0, 0, RADIUS * 3]} intensity={0.4} color="#ffffff" />
       <RotatingGlobe />
-      <Atmosphere />
       <OrbitControls
         makeDefault
         enablePan={false}
@@ -142,11 +98,11 @@ function Scene() {
 }
 
 const Globe = () => (
-  <div style={{ width: '100%', aspectRatio: '1', maxWidth: 420 }}>
+  <div style={{ width: '100%', aspectRatio: '1', maxWidth: 720 }}>
     <Canvas
       gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
       dpr={[1, 2]}
-      camera={{ fov: 45, near: 0.1, far: 1000, position: [0, 0, RADIUS * 3.1] }}
+      camera={{ fov: 45, near: 0.1, far: 1000, position: [0, 0, RADIUS * 2.7] }}
       style={{ background: 'transparent' }}
     >
       <Suspense fallback={null}>
