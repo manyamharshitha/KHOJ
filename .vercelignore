@@ -1,11 +1,16 @@
 # Only the frontend is deployed here. The backend needs a long-running process
-# and goes to Render / Railway / Fly, so shipping it to Vercel just makes the
-# upload slower.
-backend/
-backend-py/
-data/
-node_modules/
-**/node_modules/
-**/.venv/
+# and goes to Render, so shipping it to Vercel just slows the upload.
+#
+# Every pattern is anchored with a leading slash on purpose. Unanchored, `data/`
+# also matches `frontend/src/data/` — which is where callRuns.js, plans.js and
+# the question bank live — and the build fails on Vercel while still passing
+# locally, because Windows had already resolved those imports from disk.
+/backend/
+/backend-py/
+/data/
+/node_modules/
+/frontend/node_modules/
+/frontend/dist/
 **/__pycache__/
+**/.venv/
 *.log

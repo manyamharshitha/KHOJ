@@ -153,8 +153,12 @@ export function useSearch() {
       setStatus('running');
 
       const final = await api.waitForSession(created.session_id, {
+        autoCall,
         onUpdate: (payload) => {
-          if (cancelled.current) return;
+          // `payload` is null when a poll failed but is worth retrying — a cold
+          // instance, a dropped connection. Keep the last known state rather
+          // than blanking the panel on a blip.
+          if (cancelled.current || !payload) return;
           setSession(payload.session);
           setStatus(payload.session?.status ?? 'running');
         },
