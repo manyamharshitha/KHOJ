@@ -13,7 +13,8 @@ may not exist, and nothing downstream is allowed to invent one.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import StrEnum
+from decimal import Decimal
+from enum import Enum, StrEnum
 from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
@@ -28,14 +29,46 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _firestore_safe(value: Any) -> Any:
+    """Coerce one value into something Firestore can store.
+
+    Firestore accepts a short list of types. ``datetime`` is one of them and is
+    kept native so it stays queryable and orderable — dumping in JSON mode would
+    turn every timestamp into a string, and ``created_at > cutoff`` would then
+    compare text.
+
+    Everything else that Pydantic hands back as a rich object — ``HttpUrl``,
+    enums, ``Decimal`` — becomes a primitive. Without this, writing any document
+    containing a URL raises ``Cannot convert to a Firestore Value`` at the moment
+    of the write, which is a long way from the model that declared the field.
+    """
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {k: _firestore_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_firestore_safe(v) for v in value]
+    if isinstance(value, (str, int, float, bool, bytes)) or value is None:
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    # HttpUrl, AnyUrl, UUID, Path and anything else with a sane repr.
+    return str(value)
+
+
 class Base(BaseModel):
     """Common config: reject unknown fields so typos fail loudly."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     def to_firestore(self) -> dict[str, Any]:
-        """Serialise for Firestore, keeping datetimes native and dropping unset."""
-        return self.model_dump(mode="python", exclude_none=False)
+        """Serialise for Firestore: datetimes native, everything else primitive."""
+        return {
+            k: _firestore_safe(v)
+            for k, v in self.model_dump(mode="python", exclude_none=False).items()
+        }
 
 
 Rupees = Annotated[int, Field(ge=0, le=100_000_000)]
