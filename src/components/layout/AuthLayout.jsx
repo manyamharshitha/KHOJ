@@ -19,7 +19,7 @@ export const BrandPanel = styled.div`
   justify-content: center;
   color: ${({ theme }) => theme.onDark};
   overflow: hidden;
-  background: radial-gradient(120% 90% at 50% 8%, #171a21 0%, #0a0b0e 48%, #000000 100%);
+  background: radial-gradient(120% 90% at 50% 8%, #1b2340 0%, #0e1428 42%, #05070f 78%, #020308 100%);
 
   @media (max-width: 960px) {
     display: none;
@@ -79,7 +79,23 @@ export const BrandCenter = styled.div`
   text-align: center;
 `;
 
+export const BrandGlow = styled.div`
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  width: min(56vw, 620px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(94, 138, 227, 0.38) 0%, rgba(94, 138, 227, 0.14) 45%, transparent 72%);
+  filter: blur(6px);
+  pointer-events: none;
+  z-index: 0;
+`;
+
 export const BrandGlobe = styled.div`
+  position: relative;
+  z-index: 1;
   width: clamp(320px, 34vw, 580px);
   margin-bottom: -1.4rem;
   pointer-events: none;

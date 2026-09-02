@@ -1,56 +1,65 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
-import { motion, useScroll, useTransform, useMotionValueEvent } from 'framer-motion';
+import { motion, AnimatePresence, useScroll, useTransform, useMotionValueEvent } from 'framer-motion';
 import ScrollReveal from '../ui/ScrollReveal';
 import Button from '../ui/Button';
-import { ListIllustration, CallIllustration, VerifiedIllustration } from '../ui/Illustrations';
+import Iphone from '../ui/Iphone';
+import Ipad from '../ui/Ipad';
 
 const steps = [
   {
     n: '01',
-    Media: ListIllustration,
     label: 'Your questions',
     title: 'build your question set',
     desc: 'Pick from Khoj\'s question bank — rent, deposit, food policy — or write your own. Up to 15 in total.',
   },
   {
     n: '02',
-    Media: CallIllustration,
     label: 'The match',
     title: 'khoj checks the listings',
     desc: 'It scans your listing sites, or ours by default, and only calls when a listing already answers most of what you asked.',
   },
   {
     n: '03',
-    Media: VerifiedIllustration,
     label: 'The call',
     title: 'verified, live',
     desc: 'Discloses it\'s AI, asks when and in which language, then runs your questions and logs every answer.',
   },
 ];
 
+const TABLET_BREAKPOINT = 640;
 const DESKTOP_BREAKPOINT = 861;
 
-const useIsDesktop = () => {
-  const [isDesktop, setIsDesktop] = useState(
-    typeof window !== 'undefined' ? window.innerWidth >= DESKTOP_BREAKPOINT : true
-  );
+const getDeviceTier = () => {
+  if (typeof window === 'undefined') return 'desktop';
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const w = window.innerWidth;
+  if (w >= DESKTOP_BREAKPOINT && !reduceMotion) return 'desktop';
+  if (w >= TABLET_BREAKPOINT) return 'tablet';
+  return 'phone';
+};
+
+const useDeviceTier = () => {
+  const [tier, setTier] = useState(getDeviceTier);
 
   useEffect(() => {
-    const mq = window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT}px)`);
+    const desktopMq = window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT}px)`);
+    const tabletMq = window.matchMedia(`(min-width: ${TABLET_BREAKPOINT}px)`);
     const reduceMq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const update = () => setIsDesktop(mq.matches && !reduceMq.matches);
+    const update = () => setTier(getDeviceTier());
     update();
-    mq.addEventListener('change', update);
+    desktopMq.addEventListener('change', update);
+    tabletMq.addEventListener('change', update);
     reduceMq.addEventListener('change', update);
     return () => {
-      mq.removeEventListener('change', update);
+      desktopMq.removeEventListener('change', update);
+      tabletMq.removeEventListener('change', update);
       reduceMq.removeEventListener('change', update);
     };
   }, []);
 
-  return isDesktop;
+  return tier;
 };
 
 const Wrap = styled.section`
@@ -99,88 +108,118 @@ const Title = styled.h2`
   color: ${({ theme }) => theme.ink};
 `;
 
-/* ---------- mobile / plain card list ---------- */
+/* ---------- mobile & tablet / click-driven device ---------- */
 
-const Grid = styled.div`
-  max-width: 1280px;
+const PhoneLayout = styled.div`
+  max-width: 420px;
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1.8rem;
-
-  @media (max-width: 860px) {
-    grid-template-columns: 1fr;
-    max-width: 440px;
-    gap: 2.75rem;
-  }
-`;
-
-const Card = styled.div`
   display: flex;
   flex-direction: column;
+  align-items: center;
+  gap: 2.25rem;
 `;
 
-const CardMedia = styled.div`
-  position: relative;
-  aspect-ratio: 4 / 5;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid ${({ theme }) => theme.rule};
-  margin-bottom: 1.4rem;
-  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
-
-  &:hover {
-    transform: translateY(-3px);
-  }
+const PhoneStage = styled.div`
+  width: ${({ $width }) => $width};
 `;
 
-const Badge = styled.span`
-  position: absolute;
-  top: 1rem;
-  left: 1rem;
-  z-index: 1;
+const PhoneScreenInner = styled.button`
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: ${({ $lg }) => ($lg ? '2.4rem' : '1.1rem')};
+  background: none;
+  border: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+`;
+
+const PhoneBadge = styled.span`
+  display: inline-block;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.6rem;
+  font-size: ${({ $lg }) => ($lg ? '0.72rem' : '0.52rem')};
   letter-spacing: 0.1em;
-  background: rgba(255, 255, 255, 0.92);
-  color: #14171a;
-  padding: 0.28rem 0.55rem;
+  color: ${({ theme }) => theme.muted};
+  border: 1px solid ${({ theme }) => theme.rule2};
   border-radius: 2px;
+  padding: ${({ $lg }) => ($lg ? '0.3rem 0.6rem' : '0.2rem 0.4rem')};
+  margin-bottom: ${({ $lg }) => ($lg ? '1rem' : '0.75rem')};
 `;
 
-const CardTitle = styled.h3`
+const PhoneTitle = styled.h3`
   font-family: 'Fraunces', Georgia, serif;
   font-weight: 400;
-  font-size: 1.3rem;
+  font-size: ${({ $lg }) => ($lg ? '1.7rem' : '1.02rem')};
+  line-height: 1.25;
   letter-spacing: -0.01em;
-  margin: 0 0 0.6rem;
+  margin: ${({ $lg }) => ($lg ? '0 0 0.9rem' : '0 0 0.5rem')};
   color: ${({ theme }) => theme.ink};
 `;
 
-const CardDesc = styled.p`
+const PhoneDesc = styled.p`
   color: ${({ theme }) => theme.ink2};
-  font-size: 0.86rem;
-  line-height: 1.6;
-  margin: 0;
+  font-size: ${({ $lg }) => ($lg ? '1rem' : '0.7rem')};
+  line-height: 1.55;
+  max-width: ${({ $lg }) => ($lg ? '34ch' : 'none')};
+  margin: 0 auto;
 `;
 
-const StepGrid = () => (
-  <Grid>
-    {steps.map((step, i) => (
-      <ScrollReveal key={step.n} delay={i * 0.08}>
-        <Card>
-          <CardMedia>
-            <Badge>STEP {step.n}</Badge>
-            <step.Media />
-          </CardMedia>
-          <Label style={{ marginBottom: '0.6rem', display: 'block' }}>{step.label}</Label>
-          <CardTitle>{step.title}</CardTitle>
-          <CardDesc>{step.desc}</CardDesc>
-        </Card>
+const TapHint = styled.span`
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: ${({ $lg }) => ($lg ? '0.68rem' : '0.56rem')};
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: ${({ theme }) => theme.muted};
+  margin-top: ${({ $lg }) => ($lg ? '2.2rem' : '1.5rem')};
+`;
+
+const DeviceSteps = ({ Frame, stageWidth, large }) => {
+  const [activeStep, setActiveStep] = useState(0);
+  const step = steps[activeStep];
+
+  const advance = () => setActiveStep((i) => (i + 1) % steps.length);
+
+  return (
+    <PhoneLayout>
+      <ScrollReveal>
+        <PhoneStage $width={stageWidth}>
+          <Frame>
+            <PhoneScreenInner type="button" $lg={large} onClick={advance} aria-label="Show next step">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={step.n}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.25, ease: [0.2, 0.8, 0.2, 1] }}
+                >
+                  <PhoneBadge $lg={large}>STEP {step.n}</PhoneBadge>
+                  <Label style={{ marginBottom: '0.4rem', display: 'block' }}>{step.label}</Label>
+                  <PhoneTitle $lg={large}>{step.title}</PhoneTitle>
+                  <PhoneDesc $lg={large}>{step.desc}</PhoneDesc>
+                  <Dots>
+                    {steps.map((s, i) => (
+                      <Dot key={s.n} $active={i === activeStep} />
+                    ))}
+                  </Dots>
+                </motion.div>
+              </AnimatePresence>
+              <TapHint $lg={large}>Tap to see the next step</TapHint>
+            </PhoneScreenInner>
+          </Frame>
+        </PhoneStage>
       </ScrollReveal>
-    ))}
-  </Grid>
-);
+    </PhoneLayout>
+  );
+};
+
+const PhoneSteps = () => <DeviceSteps Frame={Iphone} stageWidth="min(228px, 58vw)" />;
+
+const TabletSteps = () => <DeviceSteps Frame={Ipad} stageWidth="min(460px, 62vw)" large />;
 
 /* ---------- desktop / scroll-driven macbook ---------- */
 
@@ -306,6 +345,7 @@ const ScreenInner = styled.div`
 `;
 
 const ScreenBadge = styled.span`
+  display: inline-block;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.62rem;
   letter-spacing: 0.1em;
@@ -407,7 +447,7 @@ const MacbookSteps = () => {
 /* ---------- section ---------- */
 
 const HowItWorks = () => {
-  const isDesktop = useIsDesktop();
+  const tier = useDeviceTier();
 
   return (
     <Wrap id="how-it-works">
@@ -434,7 +474,7 @@ const HowItWorks = () => {
         </ScrollReveal>
       </Head>
 
-      {isDesktop ? <MacbookSteps /> : <StepGrid />}
+      {tier === 'desktop' ? <MacbookSteps /> : tier === 'tablet' ? <TabletSteps /> : <PhoneSteps />}
     </Wrap>
   );
 };
