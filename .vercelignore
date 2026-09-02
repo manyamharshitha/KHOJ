@@ -1,0 +1,11 @@
+# Only the frontend is deployed here. The backend needs a long-running process
+# and goes to Render / Railway / Fly, so shipping it to Vercel just makes the
+# upload slower.
+backend/
+backend-py/
+data/
+node_modules/
+**/node_modules/
+**/.venv/
+**/__pycache__/
+*.log
