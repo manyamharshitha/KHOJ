@@ -5,7 +5,23 @@ import type {
 } from '../types.js';
 import { decideVerdict } from './rank.js';
 
-const groq = new Groq({ apiKey: config.groqKey || undefined });
+/*
+ * Constructed on first use, not at import.
+ *
+ * Groq's constructor throws when GROQ_API_KEY is absent, and this module is
+ * reachable from index.ts through the routes — so building it eagerly meant the
+ * entire server refused to boot without a key, and `npm run eval` died before
+ * it could print its own "no credentials" message. Extraction is one step of
+ * the pipeline; a missing key for it should cost you that step, not the server.
+ */
+let groqClient: Groq | null = null;
+function groq(): Groq {
+  if (!groqClient) {
+    if (!config.groqKey) throw new Error('GROQ_API_KEY is not set — cannot extract');
+    groqClient = new Groq({ apiKey: config.groqKey });
+  }
+  return groqClient;
+}
 
 const EXTRACTION_RULES = `You read transcripts of short phone calls between an AI
 assistant and a property broker in India, and record ONLY what the broker actually
@@ -155,7 +171,7 @@ export async function extractFromTranscript(
   let model = config.extractionModel;
 
   if (brokerTurns.length > 0 && brief.questions.length > 0) {
-    const res = await groq.chat.completions.create({
+    const res = await groq().chat.completions.create({
       model: config.extractionModel,
       messages: [
         { role: 'system', content: EXTRACTION_RULES },
@@ -174,15 +190,52 @@ export async function extractFromTranscript(
 
     const toolCall = res.choices[0]?.message?.tool_calls?.[0];
     if (toolCall) {
-      const input = JSON.parse(toolCall.function.arguments) as ToolInput;
-      available = yesNo(input.available);
-      baitPivot = yesNo(input.bait_pivot);
-      rentActual = numOrNull(input.rent_actual);
-      notes = input.notes?.trim() ? input.notes.trim() : null;
+      /*
+       * Groq's tool calling has no equivalent of Anthropic's `strict: true`, so
+       * the arguments are a model-authored string with no schema guarantee.
+       * Malformed JSON here would throw and lose the whole extraction — every
+       * question blank — when the transcript itself was perfectly good.
+       *
+       * Parse defensively and treat a bad payload as "the model said nothing",
+       * which is the same failure mode as a call where the broker was vague.
+       * The evidence guard below still governs everything that does parse.
+       */
+      let input: Partial<ToolInput> | null = null;
+      try {
+        const parsed: unknown = JSON.parse(toolCall.function.arguments);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          input = parsed as Partial<ToolInput>;
+        } else {
+          console.warn(`[extract] ${callId}: tool arguments were not an object`);
+        }
+      } catch (err) {
+        console.warn(
+          `[extract] ${callId}: could not parse tool arguments — ${String(err).slice(0, 120)}`,
+        );
+      }
 
-      const built = buildAnswers(brief, input.answers ?? [], brokerTurns);
-      answers = built.answers;
-      rejected = built.rejected;
+      if (input) {
+        available = yesNo(input.available);
+        baitPivot = yesNo(input.bait_pivot);
+        rentActual = numOrNull(input.rent_actual);
+        notes = input.notes?.trim() ? input.notes.trim() : null;
+
+        // `answers` is model-authored too: anything that is not an array of
+        // objects is dropped rather than trusted into buildAnswers.
+        const claimed = Array.isArray(input.answers)
+          ? input.answers.filter(
+            (a): a is ToolAnswer =>
+              !!a && typeof a === 'object'
+                && typeof (a as ToolAnswer).question_id === 'string'
+                && typeof (a as ToolAnswer).value === 'string'
+                && typeof (a as ToolAnswer).quote === 'string',
+          )
+          : [];
+
+        const built = buildAnswers(brief, claimed, brokerTurns);
+        answers = built.answers;
+        rejected = built.rejected;
+      }
     }
   }
 

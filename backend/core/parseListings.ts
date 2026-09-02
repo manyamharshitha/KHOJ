@@ -3,7 +3,16 @@ import { config } from '../config.js';
 import { toE164 } from './guardrails.js';
 import type { ListingInput } from '../types.js';
 
-const groq = new Groq({ apiKey: config.groqKey || undefined });
+/** Lazy: Groq's constructor throws without a key, and this module is imported
+ * at boot. See core/extract.ts for the full reasoning. */
+let groqClient: Groq | null = null;
+function groq(): Groq {
+  if (!groqClient) {
+    if (!config.groqKey) throw new Error('GROQ_API_KEY is not set');
+    groqClient = new Groq({ apiKey: config.groqKey });
+  }
+  return groqClient;
+}
 
 const PHONE_RUN = /\+?\d[\d\s\-().]{7,18}\d/g;
 
@@ -90,7 +99,7 @@ export async function parseListings(text: string): Promise<ParseResult> {
   }
 
   try {
-    const res = await groq.chat.completions.create({
+    const res = await groq().chat.completions.create({
       model: config.extractionModel,
       messages: [
         { role: 'system', content: RULES },

@@ -2,6 +2,7 @@ import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { config } from './config.js';
 import { CalleDialer } from './core/dialer.calle.js';
+import { MockDialer } from './core/dialer.mock.js';
 import { assertScriptCompliance } from './core/script.js';
 import type { Dialer } from './core/dialer.js';
 import { setDialer, startStuckSweeper } from './core/orchestrator.js';
@@ -21,7 +22,8 @@ export interface BuiltApp {
 export async function buildApp(opts: { dialer?: Dialer } = {}): Promise<BuiltApp> {
   assertScriptCompliance();
 
-  setDialer(opts.dialer ?? new CalleDialer());
+  const dialer = opts.dialer ?? (config.dialer === 'mock' ? new MockDialer() : new CalleDialer());
+  setDialer(dialer);
 
   const app = Fastify({
     logger: { transport: undefined, level: process.env.LOG_LEVEL ?? 'info' },
@@ -54,7 +56,7 @@ export async function buildApp(opts: { dialer?: Dialer } = {}): Promise<BuiltApp
 
   app.get('/api/health', async () => ({
     ok: true,
-    dialer: 'calle',
+    dialer: config.dialer,
     model: config.extractionModel,
     maxConcurrent: config.maxConcurrent,
     callWindowEnforced: !config.ignoreCallWindow,

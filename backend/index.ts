@@ -16,6 +16,6 @@ process.on('SIGTERM', shutdown);
 
 await app.listen({ port: config.port, host: '0.0.0.0' });
 app.log.info(
-  `khoj up on ${config.publicUrl} · dialer=calle · ` +
+  `khoj up on ${config.publicUrl} · dialer=${config.dialer} · ` +
   `concurrency=${config.maxConcurrent}`,
 );

@@ -1,0 +1,27 @@
+# Web
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.12
+
+# Config & models
+pydantic>=2.9
+pydantic-settings>=2.6
+python-dotenv>=1.0
+
+# Firebase: Firestore for documents, Storage for call artefacts
+firebase-admin>=6.6
+
+# Telephony — CALL-E. Not Twilio, LiveKit, Vapi or Bland.
+calle-ai>=0.1
+
+# LLM. Gemini by default; OpenAI is a drop-in via LLM_PROVIDER.
+google-genai>=0.3
+openai>=1.54
+
+# Scraping
+playwright>=1.48
+
+# HTTP, retries, notifications
+httpx>=0.27
+tenacity>=9.0
+anyio>=4.6

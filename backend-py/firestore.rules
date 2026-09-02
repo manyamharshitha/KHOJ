@@ -1,0 +1,28 @@
+rules_version = '2';
+
+// The Admin SDK bypasses these entirely — they exist for any future direct
+// client access, and to make the emulator's intent explicit: nothing in this
+// database is world-readable. Call transcripts contain a stranger's voice and
+// phone number.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;                       // server-only
+    }
+    match /search_sessions/{sessionId} {
+      allow read: if request.auth != null
+                  && resource.data.customer_id == request.auth.uid;
+      allow write: if false;
+      match /verifications/{listingId} {
+        allow read: if request.auth != null
+                    && get(/databases/$(database)/documents/search_sessions/$(sessionId))
+                         .data.customer_id == request.auth.uid;
+        allow write: if false;
+      }
+    }
+    match /{document=**} {
+      allow read, write: if false;                 // everything else, server-only
+    }
+  }
+}

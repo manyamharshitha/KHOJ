@@ -97,7 +97,7 @@ export class CalleDialer implements Dialer {
   constructor() {
     if (!config.calleKey) {
       throw new Error(
-        'DIALER=calle but CALLE_API_KEY is not set. Add it to .env, or run DIALER=mock.',
+        'CALLE_API_KEY is not set. Add it to .env, or set DIALER=mock for testing.',
       );
     }
     if (!/^https:\/\//.test(config.publicUrl)) {

@@ -1,7 +1,16 @@
 import Groq from 'groq-sdk';
 import { config } from '../config.js';
 
-const groq = new Groq({ apiKey: config.groqKey || undefined });
+/** Lazy: Groq's constructor throws without a key, and this module is imported
+ * at boot. See core/extract.ts for the full reasoning. */
+let groqClient: Groq | null = null;
+function groq(): Groq {
+  if (!groqClient) {
+    if (!config.groqKey) throw new Error('GROQ_API_KEY is not set');
+    groqClient = new Groq({ apiKey: config.groqKey });
+  }
+  return groqClient;
+}
 
 const NOT_FOUND_PATTERNS = [
   'no information', 'could not find', "couldn't find", "don't have", 'do not have',
@@ -26,7 +35,7 @@ export async function askAboutArea(question: string, locality: string, city: str
     return { answer: null, sources: [], found: false };
   }
 
-  const res = await groq.chat.completions.create({
+  const res = await groq().chat.completions.create({
     model: config.areaAgentModel,
     messages: [
       {

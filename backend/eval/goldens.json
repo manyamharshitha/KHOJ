@@ -1,73 +1,80 @@
 {
-  "_comment": "Hand-labelled expected output per fixture. null means 'the broker did not say it' and the extractor MUST return null too — a guess is a failure, not a bonus. Replace with labels from real 29 Aug captures and grow this to 30 entries.",
-
+  "_comment": "Hand-labelled expected output per fixture. null means 'the broker did not say it' and the extractor MUST return null too - a guess is a failure, not a bonus. `answers` keys are the question ids declared in score.ts. Grow this to 30 entries from real captures.",
   "01-available-over-listing.json": {
     "available": true,
     "baitPivot": null,
     "rentActual": 32000,
-    "depositMonths": 3,
-    "brokerageMonths": 1,
-    "nonVegAllowed": true,
-    "tenantProfile": "working_women_ok"
+    "answers": {
+      "deposit": "3",
+      "brokerage": "1",
+      "food": "allowed",
+      "tenant": "working women"
+    }
   },
-
   "02-bait-pivot.json": {
     "available": false,
     "baitPivot": true,
     "rentActual": null,
-    "depositMonths": null,
-    "brokerageMonths": null,
-    "nonVegAllowed": null,
-    "tenantProfile": null
+    "answers": {
+      "deposit": null,
+      "brokerage": null,
+      "food": null,
+      "tenant": null
+    }
   },
-
   "03-gone-early-exit.json": {
     "available": false,
     "baitPivot": null,
     "rentActual": null,
-    "depositMonths": null,
-    "brokerageMonths": null,
-    "nonVegAllowed": null,
-    "tenantProfile": null
+    "answers": {
+      "deposit": null,
+      "brokerage": null,
+      "food": null,
+      "tenant": null
+    }
   },
-
   "04-clean-match.json": {
     "available": true,
     "baitPivot": null,
     "rentActual": 24000,
-    "depositMonths": 2,
-    "brokerageMonths": 0,
-    "nonVegAllowed": true,
-    "tenantProfile": "anyone"
+    "answers": {
+      "deposit": "2",
+      "brokerage": "0",
+      "food": "allowed",
+      "tenant": "anyone"
+    }
   },
-
   "05-partial-vague.json": {
     "available": null,
     "baitPivot": null,
     "rentActual": null,
-    "depositMonths": null,
-    "brokerageMonths": 1,
-    "nonVegAllowed": null,
-    "tenantProfile": null
+    "answers": {
+      "deposit": null,
+      "brokerage": "1",
+      "food": null,
+      "tenant": null
+    }
   },
-
   "06-hindi-mixed.json": {
     "available": true,
     "baitPivot": null,
     "rentActual": 75000,
-    "depositMonths": 2,
-    "brokerageMonths": 1,
-    "nonVegAllowed": false,
-    "tenantProfile": "family_only"
+    "answers": {
+      "deposit": "2",
+      "brokerage": "1",
+      "food": "not allowed",
+      "tenant": "family"
+    }
   },
-
   "07-consent-refused.json": {
     "available": true,
     "baitPivot": null,
     "rentActual": 29000,
-    "depositMonths": null,
-    "brokerageMonths": 1,
-    "nonVegAllowed": null,
-    "tenantProfile": null
+    "answers": {
+      "deposit": null,
+      "brokerage": "1",
+      "food": null,
+      "tenant": null
+    }
   }
 }

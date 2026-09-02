@@ -32,6 +32,8 @@ export const config = {
   port: num(process.env.PORT, 8080),
   publicUrl: process.env.PUBLIC_URL ?? `http://localhost:${num(process.env.PORT, 8080)}`,
 
+  dialer: process.env.DIALER === 'mock' ? 'mock' : 'calle',
+
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID ?? '',
   firebaseClientEmail: process.env.FIREBASE_CLIENT_EMAIL ?? '',
   firebasePrivateKey: (process.env.FIREBASE_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
