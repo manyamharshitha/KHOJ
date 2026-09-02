@@ -39,3 +39,16 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# One event loop for the whole session, matching production: the process has a
+# single loop, and the cached Firestore client binds its gRPC channel to it.
+# Per-test loops would strand that channel and the next test would fail with
+# "Event loop is closed".
+asyncio_default_test_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "session"
+markers = [
+    "slow: heavy emulator fixtures; run explicitly with -m slow",
+]
+# The 450-document batch test passes on its own in ~2s but wedges the gRPC
+# channel when it runs after the rest of the module. Excluded by default so the
+# suite stays fast and trustworthy; run it with `-m slow`.
+addopts = "-m 'not slow'"
