@@ -227,9 +227,7 @@ const DashboardShell = ({ active, onChange, profile, onProfileChange, children }
       window.localStorage.removeItem(ONBOARDING_DONE_KEY);
       window.localStorage.removeItem(ONBOARDING_RESULT_KEY);
       window.localStorage.removeItem(TOUR_DONE_KEY);
-    } catch {
-      /* ignore storage access errors */
-    }
+    } catch {}
     navigate('/');
   };
 

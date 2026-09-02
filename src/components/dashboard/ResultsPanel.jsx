@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Badge, TextInput } from './dashboardUI';
-import { callRuns, STATUS_META } from '../../data/callRuns';
+import { STATUS_META } from '../../data/callRuns';
+import { useResults } from '../../lib/useKhoj';
 import Button from '../ui/Button';
 
 const Chips = styled.div`
@@ -208,16 +209,43 @@ const canned = (q) => {
   return "Good question — that wasn't covered on the call. I can include it if this listing gets a follow-up.";
 };
 
+const SourceNote = styled.p`
+  font-size: 0.8rem;
+  color: ${({ theme }) => theme.muted};
+  margin: 0 0 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+
+  span {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: ${({ theme, $live }) => ($live ? theme.good ?? '#1F6141' : theme.rule2)};
+  }
+`;
+
 const filters = ['All', 'Completed', 'Scheduled', 'No answer', 'Dead'];
 const statusFor = { All: null, Completed: 'completed', Scheduled: 'scheduled', 'No answer': 'no-answer', Dead: 'dead' };
 
-const ResultsPanel = () => {
+const ResultsPanel = ({ sessionId = null }) => {
   const [filter, setFilter] = useState('All');
-  const [openId, setOpenId] = useState(callRuns[0]?.id ?? null);
+  const [openId, setOpenId] = useState(null);
   const [threads, setThreads] = useState({});
   const [drafts, setDrafts] = useState({});
 
-  const visible = callRuns
+  // Live results when a session is open and the backend is reachable; the
+  // bundled sample set otherwise, labelled as such rather than passed off.
+  const { runs, isLive, loading, error } = useResults(sessionId);
+
+  // Open the first card whenever the underlying set changes, not just on mount —
+  // otherwise the panel stays collapsed after results arrive.
+  useEffect(() => {
+    setOpenId((current) => (runs.some((r) => r.id === current) ? current : runs[0]?.id ?? null));
+  }, [runs]);
+
+  const visible = runs
     .filter((r) => !statusFor[filter] || r.status === statusFor[filter])
     .slice()
     .sort((a, b) => b.matchScore - a.matchScore);
@@ -243,6 +271,17 @@ const ResultsPanel = () => {
           matches first.
         </Sub>
       </PanelHead>
+
+      <SourceNote $live={isLive}>
+        <span />
+        {loading
+          ? 'Loading your results…'
+          : isLive
+            ? 'Live results from your calls.'
+            : error
+              ? 'Showing sample results — could not reach the server.'
+              : 'Showing sample results. Run a search to see your own.'}
+      </SourceNote>
 
       <Chips>
         {filters.map((f) => (

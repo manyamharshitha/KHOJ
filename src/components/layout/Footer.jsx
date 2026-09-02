@@ -81,6 +81,19 @@ const Bottom = styled.div`
   color: ${({ theme }) => theme.muted};
 `;
 
+const LegalLinks = styled.div`
+  display: flex;
+  gap: 1.2rem;
+
+  a {
+    color: ${({ theme }) => theme.muted};
+    text-decoration: none;
+  }
+  a:hover {
+    color: ${({ theme }) => theme.ink};
+  }
+`;
+
 const Footer = () => (
   <Wrap>
     <Top>
@@ -110,6 +123,10 @@ const Footer = () => (
     </Top>
     <Bottom>
       <span>© {new Date().getFullYear()} Khoj. All rights reserved.</span>
+      <LegalLinks>
+        <Link to="/terms">Terms</Link>
+        <Link to="/privacy">Privacy</Link>
+      </LegalLinks>
       <span>Where families belong.</span>
     </Bottom>
   </Wrap>

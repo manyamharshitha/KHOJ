@@ -39,6 +39,16 @@ export const BrandNoise = styled.div`
   background-size: 22px 22px;
 `;
 
+export const GlobeWrap = styled.div`
+  position: absolute;
+  right: -8%;
+  bottom: -12%;
+  width: 60%;
+  max-width: 460px;
+  pointer-events: none;
+  opacity: 0.9;
+`;
+
 export const BrandWatermark = styled.span`
   position: absolute;
   right: 6%;
@@ -302,7 +312,7 @@ export const Feedback = styled.div`
   gap: 0.7rem;
   margin-top: 1rem;
   font-size: 0.8rem;
-  color: ${({ theme }) => theme.good};
+  color: ${({ theme, $tone }) => ($tone === 'bad' ? theme.bad : theme.good)};
 `;
 
 export const GoogleIcon = () => (

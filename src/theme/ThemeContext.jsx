@@ -9,9 +9,7 @@ const getInitialMode = () => {
   try {
     const saved = window.localStorage.getItem('khoj-theme');
     if (saved === 'light' || saved === 'dark') return saved;
-  } catch {
-    /* ignore storage access errors */
-  }
+  } catch {}
   if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark';
   return 'light';
 };
@@ -22,9 +20,7 @@ export function ThemeProvider({ children }) {
   useEffect(() => {
     try {
       window.localStorage.setItem('khoj-theme', mode);
-    } catch {
-      /* ignore storage access errors */
-    }
+    } catch {}
     document.documentElement.dataset.theme = mode;
   }, [mode]);
 

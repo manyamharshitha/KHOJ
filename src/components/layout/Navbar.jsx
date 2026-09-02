@@ -230,7 +230,14 @@ const Navbar = () => {
               </NavA>
             )}
             {pathname !== '/signup' && (
-              <Button as={Link} to="/signup" size="sm" arrow={false} variant={scrolled ? 'dark' : 'outlineLight'}>
+              <Button
+                as={Link}
+                to="/signup"
+                size="sm"
+                arrow={false}
+                variant={scrolled ? 'dark' : 'outlineLight'}
+                className="navlink"
+              >
                 Start free
               </Button>
             )}

@@ -7,6 +7,7 @@ import Loader from '../components/ui/Loader';
 import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import { plans } from '../data/plans';
+import { useAgencyLead } from '../lib/useKhoj';
 
 const Wrap = styled.div`
   background: ${({ theme }) => theme.bg};
@@ -183,7 +184,16 @@ const rows = [
   ['Weekly saved-search re-runs', '—', '—', '—', 'Yes'],
 ];
 
+const LeadNote = styled.p`
+  margin: 0.9rem 0 0;
+  font-size: 0.85rem;
+  text-align: center;
+  color: ${({ theme, $error }) => ($error ? theme.bad ?? '#A03028' : theme.muted)};
+`;
+
 const Pricing = () => {
+  // Sends the lead to the backend, which stores it and alerts the team.
+  const agencyLead = useAgencyLead();
   const [selectedTier, setSelectedTier] = useState('trial');
   const [loadingPlan, setLoadingPlan] = useState(null);
   const [confirmedPlan, setConfirmedPlan] = useState(null);
@@ -205,9 +215,15 @@ const Pricing = () => {
     }, 1600);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email) return;
+    const address = email.trim();
+    if (!address) return;
+
+    // The lead is the point of this form, so it goes first. The plan animation
+    // is decoration and must not gate a real enquiry.
+    const sent = await agencyLead.submit(address, `Interested in the ${selectedTier} tier or above.`);
+    if (sent) setEmail('');
     handleSelect(selectedTier);
   };
 
@@ -303,10 +319,13 @@ const Pricing = () => {
             onChange={(e) => setEmail(e.target.value)}
             required
           />
-          <Button type="submit" size="sm">
-            Talk to us
+          <Button type="submit" size="sm" disabled={agencyLead.status === 'sending'}>
+            {agencyLead.status === 'sending' ? 'Sending…' : 'Talk to us'}
           </Button>
         </LeadForm>
+        {agencyLead.message && (
+          <LeadNote $error={agencyLead.status === 'error'}>{agencyLead.message}</LeadNote>
+        )}
       </Section>
     </Wrap>
   );

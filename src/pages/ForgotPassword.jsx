@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Loader from '../components/ui/Loader';
+import Globe from '../components/ui/Globe';
+import { sendReset } from '../lib/authApi';
 import {
   Shell,
   BrandPanel,
@@ -11,6 +13,7 @@ import {
   BrandMark,
   BrandQuote,
   BrandCite,
+  GlobeWrap,
   Trust,
   FormPanel,
   FormCard,
@@ -25,12 +28,22 @@ import {
 
 const ForgotPassword = () => {
   const [status, setStatus] = useState('idle');
+  const [error, setError] = useState('');
+  const [email, setEmail] = useState('');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (status === 'loading') return;
     setStatus('loading');
-    window.setTimeout(() => setStatus('done'), 1200);
+    setError('');
+
+    const result = await sendReset(email);
+    if (result.error) {
+      setError(result.error);
+      setStatus('idle');
+      return;
+    }
+    setStatus('done');
   };
 
   return (
@@ -38,6 +51,9 @@ const ForgotPassword = () => {
       <BrandPanel>
         <BrandNoise />
         <BrandWatermark>khoj</BrandWatermark>
+        <GlobeWrap>
+          <Globe />
+        </GlobeWrap>
         <BrandMark to="/">khoj</BrandMark>
         <div>
           <Trust />
@@ -56,7 +72,15 @@ const ForgotPassword = () => {
           <form onSubmit={handleSubmit}>
             <Field>
               <label htmlFor="forgot-email">Email</label>
-              <Input id="forgot-email" type="email" placeholder="yourname@gmail.com" full required />
+              <Input
+                id="forgot-email"
+                type="email"
+                placeholder="yourname@gmail.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                full
+                required
+              />
             </Field>
 
             <Button type="submit" full disabled={status === 'loading'}>
@@ -68,6 +92,7 @@ const ForgotPassword = () => {
               </Feedback>
             )}
             {status === 'done' && <Feedback>Check your inbox for a reset link.</Feedback>}
+            {error && <Feedback $tone="bad">{error}</Feedback>}
           </form>
 
           <Foot>

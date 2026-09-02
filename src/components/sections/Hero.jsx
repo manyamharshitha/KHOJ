@@ -128,6 +128,10 @@ const ScrollHint = styled(motion.button)`
     height: 34px;
     background: currentColor;
   }
+
+  @media (max-width: 760px) {
+    display: none;
+  }
 `;
 
 const Hero = () => (

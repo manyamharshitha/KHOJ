@@ -4,6 +4,8 @@ import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import PasswordInput from '../components/ui/PasswordInput';
 import Loader from '../components/ui/Loader';
+import Globe from '../components/ui/Globe';
+import { signInWithGoogle, signUpWithEmail } from '../lib/authApi';
 import {
   Shell,
   BrandPanel,
@@ -12,6 +14,7 @@ import {
   BrandMark,
   BrandQuote,
   BrandCite,
+  GlobeWrap,
   Trust,
   FormPanel,
   FormCard,
@@ -30,16 +33,41 @@ import {
 
 const Signup = () => {
   const [status, setStatus] = useState('idle');
+  const [error, setError] = useState('');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (status === 'loading') return;
     setStatus('loading');
-    window.setTimeout(() => {
-      setStatus('done');
-      window.setTimeout(() => navigate('/dashboard'), 700);
-    }, 1400);
+    setError('');
+
+    const result = await signUpWithEmail(name, email, password);
+    if (result.error) {
+      setError(result.error);
+      setStatus('idle');
+      return;
+    }
+    setStatus('done');
+    navigate('/dashboard');
+  };
+
+  const handleGoogle = async () => {
+    if (status === 'loading') return;
+    setStatus('loading');
+    setError('');
+
+    const result = await signInWithGoogle();
+    if (result.error) {
+      setError(result.error);
+      setStatus('idle');
+      return;
+    }
+    setStatus('done');
+    navigate('/dashboard');
   };
 
   return (
@@ -47,6 +75,9 @@ const Signup = () => {
       <BrandPanel>
         <BrandNoise />
         <BrandWatermark>khoj</BrandWatermark>
+        <GlobeWrap>
+          <Globe />
+        </GlobeWrap>
         <BrandMark to="/">khoj</BrandMark>
         <div>
           <Trust />
@@ -65,11 +96,27 @@ const Signup = () => {
           <form onSubmit={handleSubmit}>
             <Field>
               <label htmlFor="signup-name">Full name</label>
-              <Input id="signup-name" type="text" placeholder="Your name" full required />
+              <Input
+                id="signup-name"
+                type="text"
+                placeholder="Your name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                full
+                required
+              />
             </Field>
             <Field>
               <label htmlFor="signup-email">Email</label>
-              <Input id="signup-email" type="email" placeholder="yourname@gmail.com" full required />
+              <Input
+                id="signup-email"
+                type="email"
+                placeholder="yourname@gmail.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                full
+                required
+              />
             </Field>
             <Field>
               <label htmlFor="signup-phone">
@@ -79,7 +126,14 @@ const Signup = () => {
             </Field>
             <Field>
               <label htmlFor="signup-password">Password</label>
-              <PasswordInput id="signup-password" placeholder="At least 8 characters" minLength={8} required />
+              <PasswordInput
+                id="signup-password"
+                placeholder="At least 8 characters"
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
             </Field>
 
             <Row>
@@ -106,11 +160,12 @@ const Signup = () => {
               </Feedback>
             )}
             {status === 'done' && <Feedback>You're in — taking you to your dashboard.</Feedback>}
+            {error && <Feedback $tone="bad">{error}</Feedback>}
           </form>
 
           <Divider>or sign up with</Divider>
 
-          <SocialButton type="button">
+          <SocialButton type="button" onClick={handleGoogle} disabled={status === 'loading'}>
             <GoogleIcon />
             Continue with Google
           </SocialButton>

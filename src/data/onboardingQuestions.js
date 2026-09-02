@@ -1,9 +1,3 @@
-/**
- * Static seed data for the first-run onboarding wizard.
- * Swap this file for a real API call once the backend exists —
- * nothing outside this file should need to change shape.
- */
-
 export const ONBOARDING_DONE_KEY = 'khoj-onboarding-done';
 export const ONBOARDING_RESULT_KEY = 'khoj-onboarding-result';
 export const TOUR_DONE_KEY = 'khoj-tour-done';
@@ -32,7 +26,6 @@ export const TOUR_STEPS = [
   },
 ];
 
-// Common to both renting and buying.
 export const COMMON_QUESTIONS = [
   { id: 'food', text: 'Food preference?', options: ['Veg', 'Non-veg', 'Egg'] },
   { id: 'dealType', text: 'Are you renting or buying?', options: ['Rent', 'Buy'] },
@@ -46,7 +39,6 @@ export const COMMON_QUESTIONS = [
   { id: 'pets', text: 'Do you have pets?', options: ['Yes', 'No'] },
 ];
 
-// Shown only if they said "Buy" — pick up to MAX_SECONDARY_PICKS.
 export const BUY_QUESTIONS = [
   { id: 'buy-schools', text: 'Distance from good schools' },
   { id: 'buy-safety', text: 'Safe neighbourhood for kids' },
@@ -60,7 +52,6 @@ export const BUY_QUESTIONS = [
   { id: 'buy-amenities', text: 'Gym, pool, or clubhouse on site' },
 ];
 
-// Shown only if they said "Rent" — pick up to MAX_SECONDARY_PICKS.
 export const RENT_QUESTIONS = [
   { id: 'rent-brokerage', text: 'No or low brokerage fee' },
   { id: 'rent-lockin', text: 'Short lease lock-in period' },

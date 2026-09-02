@@ -8,7 +8,7 @@ const variants = {
     &:hover {
       background-color: ${({ theme }) => theme.accent};
       border-color: ${({ theme }) => theme.accent};
-      color: #ffffff;
+      color: ${({ theme }) => theme.bg};
     }
   `,
   primary: css`
@@ -30,7 +30,7 @@ const variants = {
     }
   `,
   light: css`
-    color: ${({ theme }) => theme.ink};
+    color: #14171a;
     background-color: #ffffff;
     border-color: #ffffff;
     &:hover {
