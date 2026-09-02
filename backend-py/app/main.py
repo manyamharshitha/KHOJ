@@ -64,6 +64,22 @@ app.include_router(search.router)
 app.include_router(leads.router)
 
 
+@app.get("/", tags=["meta"])
+async def root() -> dict[str, object]:
+    """A signpost.
+
+    Every real route lives under /api, so hitting the bare domain used to return
+    a bare 404 that looks like a broken deployment. It is not — but a JSON body
+    saying so is cheaper than the confusion.
+    """
+    return {
+        "service": "khoj-api",
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/api/health",
+    }
+
+
 @app.get("/api/health", tags=["meta"])
 async def health() -> dict[str, object]:
     """Liveness, and which providers are actually wired.

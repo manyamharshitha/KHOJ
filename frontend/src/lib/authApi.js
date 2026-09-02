@@ -5,7 +5,7 @@ import {
   signInWithPopup,
   updateProfile,
 } from 'firebase/auth';
-import { auth, googleProvider } from '../firebase';
+import { auth, googleProvider, isFirebaseConfigured } from '../firebase';
 
 const FRIENDLY_MESSAGES = {
   'auth/invalid-credential': 'That email or password is incorrect.',
@@ -21,7 +21,13 @@ const FRIENDLY_MESSAGES = {
 
 const friendlyError = (err) => FRIENDLY_MESSAGES[err?.code] ?? err?.message ?? 'Something went wrong. Please try again.';
 
+/** The same answer every sign-in path gives when Firebase was never configured. */
+const NOT_CONFIGURED = {
+  error: "Sign-in isn't set up yet — the app is missing its Firebase configuration.",
+};
+
 export async function signUpWithEmail(name, email, password) {
+  if (!isFirebaseConfigured) return NOT_CONFIGURED;
   try {
     const credential = await createUserWithEmailAndPassword(auth, email, password);
     if (name) await updateProfile(credential.user, { displayName: name });
@@ -32,6 +38,7 @@ export async function signUpWithEmail(name, email, password) {
 }
 
 export async function signInWithEmail(email, password) {
+  if (!isFirebaseConfigured) return NOT_CONFIGURED;
   try {
     const credential = await signInWithEmailAndPassword(auth, email, password);
     return { user: credential.user };
@@ -41,6 +48,7 @@ export async function signInWithEmail(email, password) {
 }
 
 export async function signInWithGoogle() {
+  if (!isFirebaseConfigured) return NOT_CONFIGURED;
   try {
     const credential = await signInWithPopup(auth, googleProvider);
     return { user: credential.user };
@@ -50,6 +58,7 @@ export async function signInWithGoogle() {
 }
 
 export async function sendReset(email) {
+  if (!isFirebaseConfigured) return NOT_CONFIGURED;
   try {
     await sendPasswordResetEmail(auth, email);
     return { ok: true };

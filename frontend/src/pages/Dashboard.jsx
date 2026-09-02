@@ -7,6 +7,7 @@ import QuestionsPanel from '../components/dashboard/QuestionsPanel';
 import SourcesPanel from '../components/dashboard/SourcesPanel';
 import ResultsPanel from '../components/dashboard/ResultsPanel';
 import { ONBOARDING_DONE_KEY, ONBOARDING_RESULT_KEY, TOUR_DONE_KEY } from '../data/onboardingQuestions';
+import { SearchProvider, useSearchSession } from '../lib/SearchContext';
 
 const PANELS = {
   overview: Overview,
@@ -35,7 +36,8 @@ const initialPhase = () => {
   return 'ready';
 };
 
-const Dashboard = () => {
+const DashboardInner = () => {
+  const { sessionId } = useSearchSession();
   const [phase, setPhase] = useState(initialPhase);
   const [tab, setTab] = useState('overview');
   const [profile, setProfile] = useState({ name: 'Ananya Rao', avatar: null });
@@ -63,10 +65,20 @@ const Dashboard = () => {
 
   return (
     <DashboardShell active={tab} onChange={setTab} profile={profile} onProfileChange={setProfile}>
-      <Panel onNavigate={setTab} profile={profile} />
+      <Panel onNavigate={setTab} profile={profile} sessionId={sessionId} />
       {phase === 'tour' && <GuidedTour onFinish={completeTour} onSkip={completeTour} />}
     </DashboardShell>
   );
 };
+
+/**
+ * The search lives above the panels so Sources can start one and Results can
+ * read it, without either knowing about the other.
+ */
+const Dashboard = () => (
+  <SearchProvider>
+    <DashboardInner />
+  </SearchProvider>
+);
 
 export default Dashboard;
