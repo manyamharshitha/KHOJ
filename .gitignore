@@ -4,3 +4,19 @@ frontend/dist
 backend/node_modules
 backend/data
 *.local
+
+# Firebase service-account private keys. Never commit these — anyone holding
+# one has full admin access to Firestore, Storage and Auth for the project.
+*-firebase-adminsdk-*.json
+serviceAccountKey.json
+*serviceaccount*.json
+
+# Environment files. Real credentials live here; none of it is committable.
+.env
+.env.*
+!.env.example
+
+# Root-level installs and build output. The frontend lives in frontend/ on
+# this branch, so anything here came from running npm at the repo root.
+/node_modules/
+/dist/

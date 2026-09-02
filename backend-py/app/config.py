@@ -38,6 +38,25 @@ class Settings(BaseSettings):
     #: Comma-separated browser origins allowed to call this API with cookies.
     frontend_origins: str = "http://localhost:5173"
 
+    # --- database (Firestore Enterprise, MongoDB wire protocol) ----------
+    #: Connection string from the Firestore Enterprise database page in the
+    #: Google Cloud console. Enterprise edition speaks MongoDB, not the native
+    #: Firestore API, so this is what the data layer connects to.
+    firestore_enterprise_uri: str = ""
+    database_name: str = "khoj_production"
+
+    #: Pool sizing. A verification call holds a coroutine open for minutes while
+    #: CALL-E talks, so connections are held longer than a typical request/response
+    #: service and the floor is kept above zero to avoid reconnect churn.
+    mongo_max_pool_size: int = 50
+    mongo_min_pool_size: int = 2
+    mongo_server_selection_timeout_ms: int = 8_000
+    mongo_connect_timeout_ms: int = 10_000
+
+    #: Create indexes on startup. Turn off where the deploy user is not allowed
+    #: to issue DDL and an administrator manages indexes out of band.
+    ensure_indexes_on_startup: bool = True
+
     # --- firebase --------------------------------------------------------
     #: Path to a service-account JSON file. Leave empty on Cloud Run / GCE and
     #: the Admin SDK picks up ambient application-default credentials.
@@ -52,9 +71,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
 
     #: Cheap, fast model for bulk page extraction.
-    extraction_model: str = "gemini-2.0-flash"
+    extraction_model: str = "gemini-3.6-flash"
     #: Model for preference parsing and honesty evaluation, where nuance matters.
-    reasoning_model: str = "gemini-2.0-flash"
+    reasoning_model: str = "gemini-3.6-flash"
     #: Speech-to-speech model driving the phone conversation.
     realtime_model: str = "gpt-4o-realtime-preview-2024-12-17"
     realtime_voice: str = "alloy"
@@ -92,6 +111,16 @@ class Settings(BaseSettings):
     #: TRAI-friendly windows, IST, as ``HH:MM-HH:MM`` comma separated.
     call_windows_ist: str = "11:00-13:00,17:00-20:00"
     ignore_call_window: bool = False
+
+    #: Developer escape hatch: skip the calling window *and* the per-number
+    #: cooldown, so the same test number can be dialled repeatedly.
+    #:
+    #: The cooldown is the one that actually bites during testing. The window
+    #: only defers a call outside business hours, but the cooldown marks a
+    #: repeat call BLOCKED and never dials it — which looks identical to "the
+    #: phone never rang" from the outside. Never enable this in production: the
+    #: cooldown is what stops one broker being rung by five customers in a week.
+    bypass_call_window: bool = False
     call_max_seconds: int = 300
 
     # --- admin notifications --------------------------------------------

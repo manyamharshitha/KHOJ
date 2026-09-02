@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
@@ -11,12 +12,17 @@ from app.core.auth import OptionalUser, read_quota, require_user
 from app.core.plans import Quota, clip_to_plan, limit_for
 from app.llm.preferences import parse_preferences
 from app.models import (
+    PASTED_PLACEHOLDER_URL,
+    PASTED_SOURCE,
     ListingResult,
     SearchRequest,
     SearchResponse,
     SearchSession,
     SessionResults,
     SessionStatus,
+    TargetSite,
+    as_utc,
+    utcnow,
 )
 from app.pipeline import run_calls, run_search
 from app.ranking import rank_listings
@@ -27,11 +33,17 @@ from app.repositories import (
     listings_for_session,
     new_id,
     reports_for_session,
+    set_session_status,
 )
 from app.scraping.sites import SITES, resolve_targets
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["search"])
+
+#: How long a session may sit in ``calling`` without an update before the lock
+#: is considered abandoned and a retry is allowed through.
+STALE_CALL_LOCK = timedelta(minutes=5)
+
 
 
 @router.get("/sites")
@@ -77,16 +89,31 @@ async def start_search(
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=quota.message())
 
     criteria = await parse_preferences(body.prompt)
-    targets = resolve_targets(body.sites, criteria, max_sites=settings.max_sites_per_search)
 
-    if not targets:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "None of those sites could be resolved. Use a known key "
-                f"({', '.join(SITES)}) or a full https:// URL."
-            ),
-        )
+    pasted = (body.pasted_content or "").strip() or None
+
+    if pasted:
+        # Pasted text is the path that works when a portal keeps its phone
+        # numbers behind a login, so it takes priority over the site list and
+        # nothing is crawled at all.
+        #
+        # ``target_sites`` still needs one entry because the session schema
+        # requires it. This placeholder is never fetched; it exists so the
+        # provenance of the results reads honestly in the UI.
+        targets = [
+            TargetSite(name=PASTED_SOURCE, url=PASTED_PLACEHOLDER_URL, contact_gated=False)
+        ]
+    else:
+        targets = resolve_targets(body.sites, criteria, max_sites=settings.max_sites_per_search)
+
+        if not targets:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "None of those sites could be resolved. Use a known key "
+                    f"({', '.join(SITES)}) or a full https:// URL."
+                ),
+            )
 
     session = SearchSession(
         id=new_id("ses"),
@@ -94,6 +121,7 @@ async def start_search(
         prompt=body.prompt,
         criteria=criteria,
         target_sites=targets,
+        pasted_content=pasted,
     )
     await create_session(session)
 
@@ -160,7 +188,26 @@ async def call_all(
     if session is None:
         raise HTTPException(status_code=404, detail="No such search.")
     if session.status is SessionStatus.CALLING:
-        raise HTTPException(status_code=409, detail="This search is already calling.")
+        # A crash between "mark calling" and "mark complete" would otherwise
+        # wedge the session forever: every retry answers 409 and nothing can
+        # move it back. The lock therefore expires — a call that has produced no
+        # update in STALE_CALL_LOCK is treated as abandoned, not in progress.
+        idle = utcnow() - as_utc(session.updated_at)
+        if idle < STALE_CALL_LOCK:
+            remaining = int((STALE_CALL_LOCK - idle).total_seconds())
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This search is already calling. If it is stuck, it unlocks "
+                    f"in {remaining}s."
+                ),
+            )
+        log.warning(
+            "[%s] call lock was stale (idle %ds) — reclaiming it",
+            session_id,
+            int(idle.total_seconds()),
+        )
+        await set_session_status(session_id, SessionStatus.RANKED)
 
     listings = await listings_for_session(session_id)
     dialable = [x for x in listings if x.is_callable]

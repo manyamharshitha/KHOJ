@@ -1,53 +1,202 @@
-"""Typed Firestore access. The only module that knows the database exists.
+"""Typed database access. The only module that knows the database exists.
 
 Everything above this file works in Pydantic models. That boundary is what let
 the TypeScript predecessor swap SQLite for Firestore without touching a single
-route, and it is worth keeping.
+route, and it is what made this migration from native Firestore to Firestore
+Enterprise's MongoDB wire protocol a rewrite of one file rather than of the
+whole service.
 
 Collections
 -----------
-``customers``       one document per signed-in user
-``search_sessions`` one per search, holding the prompt and parsed criteria
-``listings``        candidates found, keyed by session
-``calls``           one per outbound attempt, with transcript and Q&A
-``analyses``        one honesty report per completed call
+``users``            one document per signed-in customer, holding tier and quota
+``search_sessions``  one per search, with the prompt and parsed criteria
+``listings``         candidates found, keyed by session
+``calls``            one per outbound attempt, with transcript and Q&A
+``analyses``         one honesty report per completed call
+``verifications``    the customer-facing record of one verified listing
+``agency_leads``     inbound requests for a plan above Premium
+
+Identity
+--------
+Every ``_id`` here is an application-generated string — ``ses_x9f2``, ``lst_a01``
+— produced by :func:`app.ids.new_id`. No ``ObjectId`` is ever created, so
+nothing has to be stringified on the way out and no BSON type reaches the API
+layer. :func:`_from_doc` maps ``_id`` onto the model's ``id`` field on read;
+:func:`_to_doc` does the reverse on write.
 """
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any, TypeVar
 
-from google.cloud.firestore_v1 import FieldFilter
-from google.cloud.firestore_v1.base_query import BaseQuery
+from pymongo import ASCENDING, DESCENDING, ReturnDocument, UpdateOne
 
-from app.firebase import get_db
+from app.core.db import get_db
 from app.ids import new_id
 from app.models import (
+    AgencyLead,
     CallLog,
     CallStatus,
     HonestyReport,
     Listing,
     SearchSession,
     SessionStatus,
+    UserProfile,
+    Verification,
+    as_utc,
     utcnow,
 )
 
+log = logging.getLogger(__name__)
+
 T = TypeVar("T")
 
-CUSTOMERS = "customers"
+USERS = "users"
 SESSIONS = "search_sessions"
 LISTINGS = "listings"
 CALLS = "calls"
 ANALYSES = "analyses"
+VERIFICATIONS = "verifications"
+AGENCY_LEADS = "agency_leads"
 
+#: Written by ``Listing.to_document`` for the index and recomputed in memory by
+#: ``rank_listings``. Stripped on read: the model declares it as a property and
+#: would reject it under ``extra="forbid"``.
+_DERIVED_FIELDS = ("total_cost", "total_monthly_cost")
 
 __all__ = ["new_id"]  # re-exported: callers may import it from either place
 
 
-def _clean(data: dict[str, Any]) -> dict[str, Any]:
-    """Drop the ``id`` field — Firestore keeps it as the document key."""
-    return {k: v for k, v in data.items() if k != "id"}
+# --------------------------------------------------------------------------
+# document <-> model
+# --------------------------------------------------------------------------
+
+
+def _from_doc(doc: Mapping[str, Any] | None, id_field: str = "id") -> dict[str, Any] | None:
+    """A raw document to model kwargs.
+
+    Three things happen here and nowhere else: ``_id`` becomes the model's id
+    field, fields written only for indexing are dropped, and naive datetimes get
+    UTC put back on them. BSON has no timezone, so every stored ``created_at``
+    reads back naive and would raise on the first comparison against
+    :func:`app.models.utcnow`.
+    """
+    if doc is None:
+        return None
+    out = {k: as_utc(v) for k, v in doc.items()}
+    doc_id = out.pop("_id", None)
+    if doc_id is not None:
+        out[id_field] = doc_id
+    for field in _DERIVED_FIELDS:
+        out.pop(field, None)
+    return out
+
+
+def _to_doc(model: Any, id_field: str = "id") -> tuple[Any, dict[str, Any]]:
+    """A model to ``(_id, body)``.
+
+    The id comes back separately rather than staying in the body because Mongo
+    rejects any update touching ``_id`` — including one that sets it to the
+    value it already holds.
+    """
+    data = model.to_document()
+    return data.pop(id_field, None), data
+
+
+def _model(cls: type[T], doc: Mapping[str, Any] | None, id_field: str = "id") -> T | None:
+    kwargs = _from_doc(doc, id_field)
+    return cls.model_validate(kwargs) if kwargs is not None else None
+
+
+# --------------------------------------------------------------------------
+# users, tiers and quota
+# --------------------------------------------------------------------------
+
+
+async def upsert_user(uid: str, payload: Mapping[str, Any]) -> None:
+    """Create or patch a profile. Never clobbers tier or usage."""
+    await get_db()[USERS].update_one({"_id": uid}, {"$set": dict(payload)}, upsert=True)
+
+
+async def get_user(uid: str) -> dict[str, Any] | None:
+    """The raw profile document, or ``None``."""
+    return await get_db()[USERS].find_one({"_id": uid})
+
+
+async def create_user_if_absent(profile: UserProfile) -> dict[str, Any]:
+    """Insert a profile only if the uid is new, and return whatever now exists.
+
+    ``$setOnInsert`` rather than read-then-write: two sign-ins racing on a first
+    login would otherwise both see "no document", and the second would overwrite
+    the first — resetting a tier that had just been granted.
+    """
+    _, body = _to_doc(profile, "uid")
+    body["last_seen_at"] = utcnow()
+    doc = await get_db()[USERS].find_one_and_update(
+        {"_id": profile.uid},
+        {"$setOnInsert": body},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return doc or {}
+
+
+async def touch_user(uid: str, **fields: Any) -> None:
+    """Refresh the volatile parts of a profile — name, avatar, last seen."""
+    fields["last_seen_at"] = utcnow()
+    await get_db()[USERS].update_one({"_id": uid}, {"$set": fields})
+
+
+async def set_user_tier(uid: str, tier: str, listings_limit: int) -> dict[str, Any] | None:
+    """Move a user to another plan and return the updated document."""
+    return await get_db()[USERS].find_one_and_update(
+        {"_id": uid},
+        {"$set": {"tier": tier, "listings_limit": listings_limit, "updated_at": utcnow()}},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+async def consume_quota_atomic(uid: str, plan_limit: int, count: int = 1) -> bool:
+    """Spend ``count`` verifications if — and only if — the plan still allows it.
+
+    The guard lives in the filter, not in Python. A read-modify-write would let
+    two searches running at once both read the same ``listings_used``, both
+    decide there was room, and both increment — handing out free phone calls and
+    leaving the counter behind reality.
+
+    ``$lte: plan_limit - count`` rather than ``$lt: plan_limit`` because a
+    multi-listing charge must not straddle the ceiling: with one verification
+    left, a request for three is refused outright rather than partly granted.
+
+    Returns ``True`` if the quota was spent, ``False`` if the plan was already
+    exhausted. The caller must not place a call on ``False``.
+    """
+    if count <= 0:
+        return True
+
+    result = await get_db()[USERS].update_one(
+        {"_id": uid, "listings_used": {"$lte": plan_limit - count}},
+        {"$inc": {"listings_used": count}, "$set": {"updated_at": utcnow()}},
+    )
+    if result.modified_count != 1:
+        log.info("quota: refused %d for %s (limit %d)", count, uid, plan_limit)
+        return False
+    return True
+
+
+async def read_quota_doc(uid: str) -> tuple[str | None, int]:
+    """``(tier, listings_used)`` straight from the database.
+
+    Read fresh at the moment of dialling rather than trusted from the session,
+    because a plan can change while a long search is running.
+    """
+    doc = await get_db()[USERS].find_one({"_id": uid}, {"tier": 1, "listings_used": 1})
+    if not doc:
+        return None, 0
+    return doc.get("tier"), int(doc.get("listings_used") or 0)
 
 
 # --------------------------------------------------------------------------
@@ -55,22 +204,25 @@ def _clean(data: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-async def create_session(session: SearchSession) -> str:
-    await get_db().collection(SESSIONS).document(session.id).set(_clean(session.to_firestore()))
+async def save_session(session: SearchSession) -> str:
+    """Upsert a whole session document."""
+    doc_id, body = _to_doc(session)
+    await get_db()[SESSIONS].update_one({"_id": doc_id}, {"$set": body}, upsert=True)
     return session.id
 
 
+async def create_session(session: SearchSession) -> str:
+    return await save_session(session)
+
+
 async def get_session(session_id: str) -> SearchSession | None:
-    snap = await get_db().collection(SESSIONS).document(session_id).get()
-    if not snap.exists:
-        return None
-    return SearchSession.model_validate({"id": snap.id, **(snap.to_dict() or {})})
+    return _model(SearchSession, await get_db()[SESSIONS].find_one({"_id": session_id}))
 
 
 async def update_session(session_id: str, **fields: Any) -> None:
     """Patch a session. ``updated_at`` is always refreshed."""
     fields["updated_at"] = utcnow()
-    await get_db().collection(SESSIONS).document(session_id).update(fields)
+    await get_db()[SESSIONS].update_one({"_id": session_id}, {"$set": fields})
 
 
 async def set_session_status(
@@ -80,17 +232,13 @@ async def set_session_status(
 
 
 async def list_sessions_for_customer(customer_id: str, limit: int = 25) -> list[SearchSession]:
-    query = (
-        get_db()
-        .collection(SESSIONS)
-        .where(filter=FieldFilter("customer_id", "==", customer_id))
-        .order_by("created_at", direction="DESCENDING")
+    cursor = (
+        get_db()[SESSIONS]
+        .find({"customer_id": customer_id})
+        .sort([("created_at", DESCENDING)])
         .limit(limit)
     )
-    return [
-        SearchSession.model_validate({"id": d.id, **(d.to_dict() or {})})
-        async for d in query.stream()
-    ]
+    return [_model(SearchSession, d) async for d in cursor]
 
 
 # --------------------------------------------------------------------------
@@ -98,51 +246,67 @@ async def list_sessions_for_customer(customer_id: str, limit: int = 25) -> list[
 # --------------------------------------------------------------------------
 
 
-async def save_listings(listings: list[Listing]) -> None:
-    """Write a batch of listings.
+async def save_listings(listings: list[Listing]) -> int:
+    """Write a batch of listings in one round trip per chunk.
 
-    Firestore caps a batch at 500 operations, so long result sets are chunked
-    rather than failing at listing 501.
+    ``bulk_write`` with ``UpdateOne(upsert=True)`` rather than ``insert_many``:
+    re-crawling a session must update the listings it finds again, not fail the
+    whole batch on the first duplicate ``_id``.
+
+    ``ordered=False`` lets the remaining operations proceed when one document is
+    rejected — losing a single malformed listing beats losing the other 24.
     """
-    db = get_db()
-    for i in range(0, len(listings), 400):
-        batch = db.batch()
-        for listing in listings[i : i + 400]:
-            batch.set(db.collection(LISTINGS).document(listing.id), _clean(listing.to_firestore()))
-        await batch.commit()
+    if not listings:
+        return 0
+
+    written = 0
+    for start in range(0, len(listings), 500):
+        operations = []
+        for listing in listings[start : start + 500]:
+            doc_id, body = _to_doc(listing)
+            operations.append(UpdateOne({"_id": doc_id}, {"$set": body}, upsert=True))
+        result = await get_db()[LISTINGS].bulk_write(operations, ordered=False)
+        written += (result.upserted_count or 0) + (result.modified_count or 0)
+    return written
 
 
 async def get_listing(listing_id: str) -> Listing | None:
-    snap = await get_db().collection(LISTINGS).document(listing_id).get()
-    if not snap.exists:
-        return None
-    data = snap.to_dict() or {}
-    data.pop("total_monthly_cost", None)  # derived on the model, not a real field
-    return Listing.model_validate({"id": snap.id, **data})
+    return _model(Listing, await get_db()[LISTINGS].find_one({"_id": listing_id}))
 
 
 async def listings_for_session(session_id: str) -> list[Listing]:
-    """Every listing in a session.
+    """Every listing in a session, pre-sorted cheapest first.
 
-    Deliberately unordered here: ranking is a pure function in ``ranking.py`` and
-    is applied in memory, so the tie-breaking rules live in one readable place
-    rather than being split between a Firestore index and Python.
+    The sort is served by the ``(session_id, total_cost)`` index, but it is not
+    the authority — :func:`app.ranking.rank_listings` is, and callers still
+    apply it. MongoDB orders nulls *first* ascending, so a listing whose price
+    the portal hid would lead the results here: the exact inversion this product
+    exists to prevent. The database sort narrows the work; ranking decides.
     """
-    query = (
-        get_db()
-        .collection(LISTINGS)
-        .where(filter=FieldFilter("session_id", "==", session_id))
+    cursor = (
+        get_db()[LISTINGS]
+        .find({"session_id": session_id})
+        .sort([("total_cost", ASCENDING), ("age_years", ASCENDING)])
     )
-    out: list[Listing] = []
-    async for doc in query.stream():
-        data = doc.to_dict() or {}
-        data.pop("total_monthly_cost", None)
-        out.append(Listing.model_validate({"id": doc.id, **data}))
-    return out
+    return [_model(Listing, d) async for d in cursor]
+
+
+async def get_listings_by_session(session_id: str, limit: int = 100) -> list[Listing]:
+    """The first ``limit`` listings of a session, cheapest then newest.
+
+    Same caveat as :func:`listings_for_session` about null ordering.
+    """
+    docs = (
+        await get_db()[LISTINGS]
+        .find({"session_id": session_id})
+        .sort([("total_cost", ASCENDING), ("age_years", ASCENDING)])
+        .to_list(length=limit)
+    )
+    return [_model(Listing, d) for d in docs]
 
 
 async def mark_listing_called(listing_id: str) -> None:
-    await get_db().collection(LISTINGS).document(listing_id).update({"called": True})
+    await get_db()[LISTINGS].update_one({"_id": listing_id}, {"$set": {"called": True}})
 
 
 # --------------------------------------------------------------------------
@@ -150,16 +314,19 @@ async def mark_listing_called(listing_id: str) -> None:
 # --------------------------------------------------------------------------
 
 
+async def save_call(call: CallLog) -> None:
+    """Upsert a whole call document — also used when the transcript lands."""
+    doc_id, body = _to_doc(call)
+    await get_db()[CALLS].update_one({"_id": doc_id}, {"$set": body}, upsert=True)
+
+
 async def create_call(call: CallLog) -> str:
-    await get_db().collection(CALLS).document(call.id).set(_clean(call.to_firestore()))
+    await save_call(call)
     return call.id
 
 
 async def get_call(call_id: str) -> CallLog | None:
-    snap = await get_db().collection(CALLS).document(call_id).get()
-    if not snap.exists:
-        return None
-    return CallLog.model_validate({"id": snap.id, **(snap.to_dict() or {})})
+    return _model(CallLog, await get_db()[CALLS].find_one({"_id": call_id}))
 
 
 async def get_call_by_provider_id(provider_call_id: str) -> CallLog | None:
@@ -168,51 +335,26 @@ async def get_call_by_provider_id(provider_call_id: str) -> CallLog | None:
     Webhooks arrive knowing only the provider's identifier, so this is the hinge
     between their world and ours.
     """
-    query = (
-        get_db()
-        .collection(CALLS)
-        .where(filter=FieldFilter("provider_call_id", "==", provider_call_id))
-        .limit(1)
-    )
-    async for doc in query.stream():
-        return CallLog.model_validate({"id": doc.id, **(doc.to_dict() or {})})
-    return None
+    return _model(CallLog, await get_db()[CALLS].find_one({"provider_call_id": provider_call_id}))
 
 
 async def update_call(call_id: str, **fields: Any) -> None:
-    await get_db().collection(CALLS).document(call_id).update(fields)
-
-
-async def save_call(call: CallLog) -> None:
-    """Replace a whole call document — used when the transcript is finalised."""
-    await get_db().collection(CALLS).document(call.id).set(_clean(call.to_firestore()))
+    await get_db()[CALLS].update_one({"_id": call_id}, {"$set": fields})
 
 
 async def calls_for_session(session_id: str) -> list[CallLog]:
-    query = (
-        get_db().collection(CALLS).where(filter=FieldFilter("session_id", "==", session_id))
-    )
-    return [
-        CallLog.model_validate({"id": d.id, **(d.to_dict() or {})}) async for d in query.stream()
-    ]
+    cursor = get_db()[CALLS].find({"session_id": session_id})
+    return [_model(CallLog, d) async for d in cursor]
 
 
 async def count_active_calls(session_id: str) -> int:
     """Calls occupying a line right now, for the concurrency cap."""
-    query = (
-        get_db()
-        .collection(CALLS)
-        .where(filter=FieldFilter("session_id", "==", session_id))
-        .where(
-            filter=FieldFilter(
-                "call_status",
-                "in",
-                [CallStatus.DIALING.value, CallStatus.IN_PROGRESS.value],
-            )
-        )
+    return await get_db()[CALLS].count_documents(
+        {
+            "session_id": session_id,
+            "call_status": {"$in": [CallStatus.DIALING.value, CallStatus.IN_PROGRESS.value]},
+        }
     )
-    result = await query.count().get()
-    return int(result[0][0].value)
 
 
 async def called_recently(phone_e164: str, within_days: int) -> bool:
@@ -224,16 +366,10 @@ async def called_recently(phone_e164: str, within_days: int) -> bool:
     if within_days <= 0:
         return False
     cutoff = utcnow() - timedelta(days=within_days)
-    query = (
-        get_db()
-        .collection(CALLS)
-        .where(filter=FieldFilter("phone_dialed", "==", phone_e164))
-        .where(filter=FieldFilter("created_at", ">", cutoff))
-        .limit(1)
+    doc = await get_db()[CALLS].find_one(
+        {"phone_dialed": phone_e164, "created_at": {"$gt": cutoff}}, {"_id": 1}
     )
-    async for _ in query.stream():
-        return True
-    return False
+    return doc is not None
 
 
 # --------------------------------------------------------------------------
@@ -242,24 +378,110 @@ async def called_recently(phone_e164: str, within_days: int) -> bool:
 
 
 async def save_report(report: HonestyReport) -> str:
-    await get_db().collection(ANALYSES).document(report.id).set(_clean(report.to_firestore()))
+    doc_id, body = _to_doc(report)
+    await get_db()[ANALYSES].update_one({"_id": doc_id}, {"$set": body}, upsert=True)
     return report.id
 
 
 async def report_for_call(call_id: str) -> HonestyReport | None:
-    query = (
-        get_db().collection(ANALYSES).where(filter=FieldFilter("call_id", "==", call_id)).limit(1)
-    )
-    async for doc in query.stream():
-        return HonestyReport.model_validate({"id": doc.id, **(doc.to_dict() or {})})
-    return None
+    return _model(HonestyReport, await get_db()[ANALYSES].find_one({"call_id": call_id}))
 
 
 async def reports_for_session(session_id: str) -> list[HonestyReport]:
-    query: BaseQuery = (
-        get_db().collection(ANALYSES).where(filter=FieldFilter("session_id", "==", session_id))
+    cursor = get_db()[ANALYSES].find({"session_id": session_id})
+    return [_model(HonestyReport, d) async for d in cursor]
+
+
+# --------------------------------------------------------------------------
+# verifications
+# --------------------------------------------------------------------------
+
+
+def _verification_id(session_id: str, listing_id: str) -> str:
+    """One verification per listing per session.
+
+    Firestore held these in a subcollection under the session. Mongo has no
+    subcollections, so the parent is folded into the key — preserving the same
+    guarantee that a retried call overwrites its own record instead of leaving
+    two contradictory ones behind.
+    """
+    return f"{session_id}:{listing_id}"
+
+
+async def save_verification(session_id: str, verification: Verification) -> str:
+    """Persist the customer-facing record of one verification.
+
+    Written even for a call that never connected. "We rang and nobody answered"
+    is a real result the customer paid for; leaving a silent gap would look like
+    the listing was simply skipped.
+    """
+    doc_id = _verification_id(session_id, verification.listing_id)
+    body = verification.to_document()
+    body["session_id"] = session_id
+    await get_db()[VERIFICATIONS].update_one({"_id": doc_id}, {"$set": body}, upsert=True)
+    return doc_id
+
+
+def _verification_from_doc(doc: Mapping[str, Any]) -> Verification:
+    """Strip the two keys that exist for storage rather than for the model."""
+    data = _from_doc(doc) or {}
+    data.pop("id", None)  # the composite key
+    data.pop("session_id", None)  # the query field
+    return Verification.model_validate(data)
+
+
+async def get_session_verifications(session_id: str) -> list[Verification]:
+    """Every verification for a session, newest first."""
+    cursor = (
+        get_db()[VERIFICATIONS]
+        .find({"session_id": session_id})
+        .sort([("created_at", DESCENDING)])
     )
-    return [
-        HonestyReport.model_validate({"id": d.id, **(d.to_dict() or {})})
-        async for d in query.stream()
-    ]
+    return [_verification_from_doc(doc) async for doc in cursor]
+
+
+async def get_verification(session_id: str, listing_id: str) -> Verification | None:
+    doc = await get_db()[VERIFICATIONS].find_one({"_id": _verification_id(session_id, listing_id)})
+    return _verification_from_doc(doc) if doc is not None else None
+
+
+# --------------------------------------------------------------------------
+# agency leads
+# --------------------------------------------------------------------------
+
+
+async def save_agency_lead(lead: AgencyLead) -> str:
+    """Store an inbound request for a plan above Premium.
+
+    Durable first, notified second. This is a warm lead from somebody who has
+    already hit a paid ceiling, and a dropped webhook must never be able to lose
+    it — so the write lands before any notification is attempted.
+    """
+    doc_id, body = _to_doc(lead)
+    body.setdefault("status", "new")
+    body.setdefault("created_at", utcnow())
+    await get_db()[AGENCY_LEADS].update_one({"_id": doc_id}, {"$set": body}, upsert=True)
+    return lead.id
+
+
+async def mark_lead_notified(lead_id: str, delivered: bool, detail: str | None) -> None:
+    """Record whether the admin notification actually went out."""
+    await get_db()[AGENCY_LEADS].update_one(
+        {"_id": lead_id},
+        {"$set": {"notified": delivered, "notification_detail": detail}},
+    )
+
+
+async def get_agency_lead(lead_id: str) -> AgencyLead | None:
+    return _model(AgencyLead, await get_db()[AGENCY_LEADS].find_one({"_id": lead_id}))
+
+
+async def list_agency_leads(limit: int = 50) -> list[AgencyLead]:
+    """Newest leads first — the order an admin wants to work them in."""
+    docs = (
+        await get_db()[AGENCY_LEADS]
+        .find({})
+        .sort([("created_at", DESCENDING)])
+        .to_list(length=limit)
+    )
+    return [_model(AgencyLead, d) for d in docs]

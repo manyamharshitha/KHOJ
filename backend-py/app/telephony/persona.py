@@ -18,8 +18,8 @@ from app.models import Listing, SearchCriteria
 #: discloses the AI, states the time cost, asks consent to record.
 OPENER = (
     "Hello — I'm an AI assistant calling on behalf of someone looking for a flat. "
-    "This will take under a minute, and I'm recording it so she can hear your "
-    "answers herself. Is that alright?"
+    "This will take two or three minutes, and I'm recording it so she can hear "
+    "your answers herself. Is that alright?"
 )
 
 #: If consent is refused, the call ends here. It is not negotiated.
@@ -78,10 +78,13 @@ def build_task(listing: Listing, criteria: SearchCriteria, criteria_text: str) -
     if listing.age_years is not None:
         claims.append(f"- Advertised age of the building: {listing.age_years:g} years")
     if listing.property_type or listing.bedrooms is not None:
-        claims.append(
-            f"- Advertised as: {listing.property_type or ''} "
-            f"{f'{listing.bedrooms}BHK' if listing.bedrooms is not None else ''}".strip()
-        )
+        kind = (listing.property_type or "").strip()
+        bhk = f"{listing.bedrooms}BHK" if listing.bedrooms is not None else ""
+        # "2BHK" as a property_type already carries the bedroom count, so
+        # appending it again produced "2BHK 2BHK" in the spoken script.
+        described = kind if bhk and bhk.lower() in kind.lower() else f"{kind} {bhk}".strip()
+        if described:
+            claims.append(f"- Advertised as: {described}")
     if listing.furnishing:
         claims.append(f"- Furnishing: {listing.furnishing}")
     if listing.amenities:
@@ -128,6 +131,8 @@ Her non-negotiables:
 Work these into the conversation naturally. Order is yours; skip anything already
 answered.
 
+**Ask these every time. Do not end the call without trying.**
+
 1. Whether the flat is genuinely available — ask when she could come and see it.
    A specific time means it is real. Vagueness, or being steered toward a
    different property, is worth noticing and worth staying polite about.
@@ -135,9 +140,31 @@ answered.
    often stale, and maintenance is often left out of the advert entirely.
 3. The deposit, in months or rupees.
 4. Whether there is a brokerage on top, and how much.
-5. Whether the contact is the owner or an agent — ask conversationally, do not
+5. When the flat is actually free to move into.
+6. Whether the contact is the owner or an agent — ask conversationally, do not
    interrogate. "Are you the owner, or are you handling it for them?" is enough.
-6. Anything on her non-negotiables list that the advert did not settle.
+7. Anything on her non-negotiables list that the advert did not settle.
+
+**Then ask as many of these as the conversation comfortably allows.** Stop if
+they sound rushed or irritated — a complete answer sheet is not worth being the
+call that annoyed them into hanging up.
+
+8. Lock-in or minimum lease period, and the notice needed before vacating. An
+   eleven-month lock-in with two months' notice is a real cost, and it is never
+   in the advert.
+9. Whether the rent goes up annually, and by how much.
+10. What the maintenance charge actually covers — water, lift, security, common
+    area.
+11. Who pays for the rental agreement, stamp duty and registration.
+12. Parking: car or two-wheeler, covered or open, included or charged extra.
+13. Power backup — and whether it runs the flat or only the common areas.
+14. Which floor it is on, and whether there is a lift. A third floor with no lift
+    matters to some people a great deal.
+15. What furniture and appliances actually come with it — "semi-furnished" means
+    almost nothing on its own.
+
+If they will only answer a few, prioritise the money: rent, maintenance, deposit,
+brokerage, lock-in. Those five decide whether the flat is affordable at all.
 
 ## How to behave
 
@@ -156,7 +183,11 @@ answered.
 - If they answer in Hindi, Telugu, Kannada, Tamil or Marathi, continue in that
   language.
 - If they are busy or driving, offer to call back and end promptly. Do not push.
-- Keep the whole call under about two minutes.
+- Aim to be done in about three to four minutes. That is long enough for the
+  list above at a human pace, and short enough to stay a reasonable thing to do
+  to a stranger. If they are engaged and answering, finishing the list is worth
+  the extra minute; if they are not, leave early with the money questions
+  answered.
 
 When you have what you need, close with something like: "{CLOSE}"
 """

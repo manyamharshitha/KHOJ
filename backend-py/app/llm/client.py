@@ -145,6 +145,104 @@ async def complete_json(
     return parsed
 
 
+# --------------------------------------------------------------------------
+# Gemini schema translation
+# --------------------------------------------------------------------------
+
+#: JSON Schema keywords Gemini's OpenAPI 3.0 subset rejects outright.
+#:
+#: ``additionalProperties`` is the one that bites first: every model here
+#: inherits ``Base``, which sets ``extra="forbid"``, and Pydantic renders that
+#: as ``"additionalProperties": false``. The API answers with
+#: ``Unknown name "additional_properties"`` and the whole extraction returns
+#: nulls. Passing the Pydantic class straight to ``response_schema`` does not
+#: help — the SDK derives the same schema and emits the same key.
+_GEMINI_UNSUPPORTED = frozenset(
+    {
+        "additionalProperties",
+        "$defs",
+        "definitions",
+        "$schema",
+        "$id",
+        "title",
+        "default",
+        "examples",
+        "const",
+        "discriminator",
+        "readOnly",
+        "writeOnly",
+        "patternProperties",
+        "unevaluatedProperties",
+    }
+)
+
+
+def _inline_schema(node: Any, defs: dict[str, Any], seen: frozenset[str]) -> Any:
+    """One node of a JSON Schema, rewritten into Gemini's dialect.
+
+    Three transformations, all of them necessary rather than cosmetic:
+
+    * ``$ref`` is inlined from ``$defs``. Gemini has no reference resolver, so
+      an enum like ``TenantProfile`` arrives as a dangling pointer otherwise.
+    * ``anyOf: [X, {"type": "null"}]`` — how Pydantic v2 spells ``X | None`` —
+      collapses to ``X`` plus ``nullable: true``, which Gemini does understand.
+    * Unsupported keywords are dropped.
+
+    ``seen`` guards against a self-referencing model looping forever. Nothing in
+    this codebase is recursive today, but a schema walker that can hang on one
+    is a poor thing to leave lying around.
+    """
+    if isinstance(node, list):
+        return [_inline_schema(item, defs, seen) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    if "$ref" in node:
+        name = node["$ref"].rsplit("/", 1)[-1]
+        if name in seen:
+            # A cycle. Gemini cannot express one, and a permissive string beats
+            # either infinite recursion or a schema it will reject.
+            return {"type": "string"}
+        return _inline_schema(defs.get(name, {}), defs, seen | {name})
+
+    if "anyOf" in node:
+        variants = [v for v in node["anyOf"] if v.get("type") != "null"]
+        nullable = len(variants) != len(node["anyOf"])
+
+        if len(variants) == 1:
+            resolved = _inline_schema(variants[0], defs, seen)
+            if isinstance(resolved, dict):
+                if nullable:
+                    resolved["nullable"] = True
+                # The description sits on the union, not the variant, so it
+                # would be lost in the collapse — and it is the only hint the
+                # model gets about what the field means.
+                if "description" in node:
+                    resolved.setdefault("description", node["description"])
+            return resolved
+
+        collapsed: dict[str, Any] = {
+            "anyOf": [_inline_schema(v, defs, seen) for v in variants]
+        }
+        if nullable:
+            collapsed["nullable"] = True
+        if "description" in node:
+            collapsed["description"] = node["description"]
+        return collapsed
+
+    return {
+        key: _inline_schema(value, defs, seen)
+        for key, value in node.items()
+        if key not in _GEMINI_UNSUPPORTED
+    }
+
+
+def gemini_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """A Pydantic JSON Schema, translated into what Gemini will accept."""
+    defs = schema.get("$defs") or schema.get("definitions") or {}
+    return _inline_schema(schema, defs, frozenset())
+
+
 async def _gemini_json(
     system: str, user: str, schema: dict[str, Any], model: str, temp: float, max_tokens: int
 ) -> str:
@@ -156,7 +254,7 @@ async def _gemini_json(
         config=types.GenerateContentConfig(
             system_instruction=system,
             response_mime_type="application/json",
-            response_schema=schema,
+            response_schema=gemini_schema(schema),
             temperature=temp,
             max_output_tokens=max_tokens,
         ),

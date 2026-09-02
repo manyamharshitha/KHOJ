@@ -36,7 +36,18 @@ services:
       - key: FRONTEND_ORIGINS
         sync: false
 
+      # --- database ---------------------------------------------------
+      # Firestore Enterprise speaks the MongoDB wire protocol. The connection
+      # string carries a password, so it is a dashboard secret and never a
+      # value committed here.
+      - key: FIRESTORE_ENTERPRISE_URI
+        sync: false
+      - key: DATABASE_NAME
+        value: khoj_production
+
       # --- firebase ---------------------------------------------------
+      # Verifying Google ID tokens and signing recording URLs only — documents
+      # live in Firestore Enterprise, above.
       # Upload the service account JSON as a Render Secret File named
       # serviceAccountKey.json; Render mounts it at /etc/secrets/.
       - key: FIREBASE_CREDENTIALS_FILE

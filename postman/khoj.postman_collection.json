@@ -1,0 +1,184 @@
+{
+  "info": {
+    "name": "Khoj — real verification call",
+    "description": "End-to-end test of the Khoj backend against a real CALL-E call.\n\nBefore you start, set the collection variable `phone_e164` to YOUR OWN mobile in E.164 form (+91 then 10 digits). Step 4 dials it for real: it costs CALL-E credits and rings an actual phone, so point it at yourself first and at broker numbers only once the round trip works.\n\nRun the requests in order. Step 2 saves `session_id` into a collection variable automatically, so nothing has to be copied by hand.\n\nAuth: none. The local .env sets AUTH_REQUIRED=false. Against a deployed backend with AUTH_REQUIRED=true you must add `Authorization: Bearer <Firebase ID token>` to every request except Health.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8010",
+      "description": "Local server. Use https://khoj-zgkq.onrender.com for the deployed one."
+    },
+    {
+      "key": "phone_e164",
+      "value": "+91XXXXXXXXXX",
+      "description": "YOUR mobile. This number gets called for real in step 4."
+    },
+    {
+      "key": "session_id",
+      "value": "",
+      "description": "Filled in automatically by step 2."
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health — is everything wired?",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{base_url}}/api/health", "host": ["{{base_url}}"], "path": ["api", "health"] },
+        "description": "Confirm before spending a call. You want database_connected true, telephony 'calle', llm_configured true, calle_configured true, and call_windows_enforced false (otherwise a call outside 11:00-13:00 or 17:00-20:00 IST is deferred, not dialled, and looks broken when it is not)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "pm.test('server is up', () => pm.response.to.have.status(200));",
+              "pm.test('database connected', () => pm.expect(b.database_connected).to.be.true);",
+              "pm.test('real telephony, not mock', () => pm.expect(b.telephony).to.eql('calle'));",
+              "pm.test('CALL-E key present', () => pm.expect(b.calle_configured).to.be.true);",
+              "pm.test('LLM configured', () => pm.expect(b.llm_configured).to.be.true);",
+              "if (b.call_windows_enforced) {",
+              "  console.warn('Call windows are ON — a call outside 11:00-13:00 / 17:00-20:00 IST will be deferred. Set IGNORE_CALL_WINDOW=true to test now.');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Start a search (nothing is dialled yet)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"prompt\": \"2BHK in Kondapur under 25000 for a family\",\n  \"sites\": [],\n  \"pasted_content\": \"2BHK flat for rent in Kondapur, Hyderabad. Rent Rs 22000 per month, maintenance Rs 2000, deposit Rs 60000. 4 year old building, 2nd floor, semi-furnished, family preferred. Contact owner {{phone_e164}}\",\n  \"auto_call\": false\n}"
+        },
+        "url": { "raw": "{{base_url}}/api/search", "host": ["{{base_url}}"], "path": ["api", "search"] },
+        "description": "`pasted_content` skips crawling entirely, which is the path that works when a portal hides its phone numbers behind a login. Gemini extracts the listing from this text — including the contact number, which is what makes it dialable in step 4.\n\n`auto_call` stays false so you choose when the phone rings.\n\nReturns 202 with session_id, the parsed criteria, your tier, and the listings limit."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('search accepted', () => pm.response.to.have.status(202));",
+              "const b = pm.response.json();",
+              "pm.collectionVariables.set('session_id', b.session_id);",
+              "console.log('session_id =', b.session_id, '| tier', b.tier, '| limit', b.listings_limit);",
+              "if (pm.collectionVariables.get('phone_e164').includes('X')) {",
+              "  console.error('phone_e164 is still the placeholder — set it to your real number before step 4.');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Poll until status is ranked",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/session/{{session_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "session", "{{session_id}}"]
+        },
+        "description": "Send this until session.status is 'ranked' — usually a few seconds while Gemini extracts and the listings are ordered.\n\nCheck `listings[0].contact_number` is populated before step 4. If it is null the model did not find a number in the pasted text, and call-all will return 409 with nothing to dial. Fix that by making the number more explicit in step 2 rather than by retrying."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const b = pm.response.json();",
+              "const s = b.session && b.session.status;",
+              "console.log('status =', s, '| listings =', (b.listings || []).length);",
+              "pm.test('session found', () => pm.response.to.have.status(200));",
+              "const dialable = (b.listings || []).filter(l => l.contact_number);",
+              "if (s === 'ranked') {",
+              "  pm.test('at least one listing has a number to dial', () => pm.expect(dialable.length).to.be.above(0));",
+              "  if (dialable.length) console.log('will dial:', dialable[0].contact_number);",
+              "} else {",
+              "  console.log('not ranked yet — send this request again');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Place the call (YOUR PHONE RINGS)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/session/{{session_id}}/call-all?limit=1",
+          "host": ["{{base_url}}"],
+          "path": ["api", "session", "{{session_id}}", "call-all"],
+          "query": [
+            { "key": "limit", "value": "1", "description": "Hard cap. Keep at 1 so exactly one call is placed." }
+          ]
+        },
+        "description": "This places a REAL outbound call through CALL-E. It costs credits and rings a real phone.\n\nlimit=1 caps it at one call, and MAX_CALLS_PER_SESSION=2 in .env is a second backstop.\n\nAnswer as a broker would. Quote a HIGHER rent than the 22,000 in the advert — then the honesty evaluator has a genuine discrepancy to catch in step 5, which is the whole point of the product.\n\n409 means no listing had a phone number: go back to step 3 and check contact_number.\n402 means the plan's verification quota is used up."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('call queued', () => pm.response.to.have.status(202));",
+              "const b = pm.response.json();",
+              "console.log('queued =', b.queued, '| tier', b.tier, '| remaining after', b.remaining_after);",
+              "if (pm.response.code === 409) console.error('Nothing dialable — check listings[].contact_number in step 3.');",
+              "if (pm.response.code === 402) console.error('Quota exhausted for this plan.');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Read the verified result",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/session/{{session_id}}/results",
+          "host": ["{{base_url}}"],
+          "path": ["api", "session", "{{session_id}}", "results"]
+        },
+        "description": "Send once the call has ended.\n\nEach entry carries the listing, the call with its transcript and question/answer pairs, and the honesty report: honesty_score, final_verdict, red_flags, and listing_discrepancies comparing what the advert claimed against what was actually said on the phone.\n\nAn answer is only recorded when the model can quote the broker verbatim — a quote that is not literally in the transcript is discarded rather than shown."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('results returned', () => pm.response.to.have.status(200));",
+              "const b = pm.response.json();",
+              "const r = (b.results || [])[0];",
+              "if (!r) { console.log('no results yet — the call may still be running'); return; }",
+              "console.log('call status  :', r.call && r.call.call_status);",
+              "console.log('transcript   :', r.call ? (r.call.transcript || []).length : 0, 'turns');",
+              "console.log('Q&A pairs    :', r.call ? (r.call.qna_pairs || []).length : 0);",
+              "if (r.honesty) {",
+              "  console.log('honesty score:', r.honesty.honesty_score, '/10');",
+              "  console.log('verdict      :', r.honesty.final_verdict);",
+              "  console.log('discrepancies:', (r.honesty.listing_discrepancies || []).length);",
+              "}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

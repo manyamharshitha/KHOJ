@@ -1,6 +1,6 @@
-"""Typed document models for every Firestore collection.
+"""Typed document models for every collection.
 
-Firestore is schemaless, which means the schema lives here or nowhere. Every
+The database is schemaless, which means the schema lives here or nowhere. Every
 read and write in ``repositories.py`` goes through these models, so a field
 rename is a type error rather than a silent ``None`` three weeks later.
 
@@ -25,31 +25,45 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 def utcnow() -> datetime:
-    """Timezone-aware UTC now. Firestore stores naive datetimes ambiguously."""
+    """Timezone-aware UTC now. BSON drops tzinfo, so reads go through as_utc."""
     return datetime.now(timezone.utc)
 
 
-def _firestore_safe(value: Any) -> Any:
-    """Coerce one value into something Firestore can store.
+def as_utc(value: Any) -> Any:
+    """Re-attach UTC to a datetime that came back from BSON.
 
-    Firestore accepts a short list of types. ``datetime`` is one of them and is
-    kept native so it stays queryable and orderable — dumping in JSON mode would
-    turn every timestamp into a string, and ``created_at > cutoff`` would then
-    compare text.
+    BSON has no timezone: a tz-aware datetime is stored as UTC and read back
+    naive. Comparing a naive value against ``utcnow()`` raises ``can't compare
+    offset-naive and offset-aware datetimes``, so every datetime crossing back
+    out of the database goes through here. Non-datetimes pass through untouched.
+    """
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
-    Everything else that Pydantic hands back as a rich object — ``HttpUrl``,
-    enums, ``Decimal`` — becomes a primitive. Without this, writing any document
-    containing a URL raises ``Cannot convert to a Firestore Value`` at the moment
-    of the write, which is a long way from the model that declared the field.
+
+def _bson_safe(value: Any) -> Any:
+    """Coerce one value into something BSON can store.
+
+    ``datetime`` is kept native so it stays queryable and orderable — dumping in
+    JSON mode would turn every timestamp into a string, and ``created_at > cutoff``
+    would then compare text. BSON stores datetimes at millisecond resolution and
+    strips the tzinfo, so reads come back naive UTC; :func:`as_utc` puts the
+    timezone back rather than letting naive values leak into comparisons.
+
+    Everything else Pydantic hands back as a rich object — ``HttpUrl``, enums,
+    ``Decimal`` — becomes a primitive. Without this, writing any document
+    containing a URL raises ``cannot encode object`` at the moment of the write,
+    which is a long way from the model that declared the field.
     """
     if isinstance(value, datetime):
         return value
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, dict):
-        return {k: _firestore_safe(v) for k, v in value.items()}
+        return {k: _bson_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [_firestore_safe(v) for v in value]
+        return [_bson_safe(v) for v in value]
     if isinstance(value, (str, int, float, bool, bytes)) or value is None:
         return value
     if isinstance(value, Decimal):
@@ -59,14 +73,24 @@ def _firestore_safe(value: Any) -> Any:
 
 
 class Base(BaseModel):
-    """Common config: reject unknown fields so typos fail loudly."""
+    """Common config: reject unknown fields so typos fail loudly.
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    ``extra="forbid"`` is why every read strips ``_id`` before validating —
+    Mongo adds that key to every document and the models do not declare it. The
+    stripping happens once, in ``repositories._from_doc``, so the rule stays
+    strict everywhere else.
+    """
 
-    def to_firestore(self) -> dict[str, Any]:
-        """Serialise for Firestore: datetimes native, everything else primitive."""
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+    )
+
+    def to_document(self) -> dict[str, Any]:
+        """Serialise for BSON: datetimes native, everything else primitive."""
         return {
-            k: _firestore_safe(v)
+            k: _bson_safe(v)
             for k, v in self.model_dump(mode="python", exclude_none=False).items()
         }
 
@@ -135,6 +159,16 @@ class SearchCriteria(Base):
     custom_questions: list[str] = Field(default_factory=list)
 
 
+#: Source label for listings the customer pasted rather than ones we crawled.
+#: Shared by the route that creates the session and the pipeline that extracts
+#: it, so the provenance shown in the UI cannot drift between them.
+PASTED_SOURCE = "Pasted content"
+
+#: Never fetched. ``TargetSite.url`` is a required ``HttpUrl`` and a session
+#: needs at least one target, so a pasted-only search still needs a value.
+PASTED_PLACEHOLDER_URL = "https://pasted.local/"
+
+
 class TargetSite(Base):
     """One site to search. Either a known portal or a customer-supplied URL."""
 
@@ -152,6 +186,15 @@ class SearchSession(Base):
     prompt: str = Field(min_length=1, max_length=4000)
     criteria: SearchCriteria
     target_sites: list[TargetSite] = Field(min_length=1, max_length=5)
+
+    #: Listing text the customer pasted. When present the crawler is skipped
+    #: entirely and this text is extracted directly.
+    #:
+    #: It has to live on the session, not just on the request: the search runs
+    #: as a background task that receives only this object, so a field left on
+    #: ``SearchRequest`` is unreachable by the code that would use it — which is
+    #: exactly how it came to be accepted by the API and silently discarded.
+    pasted_content: str | None = Field(default=None, max_length=400_000)
 
     status: SessionStatus = SessionStatus.QUEUED
     error: str | None = None
@@ -244,10 +287,18 @@ class Listing(Base):
         """Whether there is a number to dial."""
         return bool(self.contact_number)
 
-    def to_firestore(self) -> dict[str, Any]:
-        """Persist the derived total so Firestore can query and order on it."""
-        data = super().to_firestore()
-        data["total_monthly_cost"] = self.total_monthly_cost
+    def to_document(self) -> dict[str, Any]:
+        """Persist the derived total so the database can index and order on it.
+
+        ``total_cost`` is denormalised purely to make the compound index
+        ``(session_id, total_cost)`` useful. It is derived, never authoritative:
+        :func:`app.ranking.rank_listings` recomputes it in memory, and that is
+        also where "cost unknown sorts last" is enforced. MongoDB sorts nulls
+        *first* in ascending order, which for this product is exactly backwards —
+        it would put every listing whose price the portal hid at the very top.
+        """
+        data = super().to_document()
+        data["total_cost"] = self.total_monthly_cost
         return data
 
 

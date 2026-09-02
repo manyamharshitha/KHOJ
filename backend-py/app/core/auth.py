@@ -20,8 +20,8 @@ from firebase_admin import auth as fb_auth
 
 from app.config import settings
 from app.core.plans import DEFAULT_TIER, Tier, limit_for, normalise_tier
-from app.firebase import get_db
-from app.models import UserProfile, utcnow
+from app import repositories as repo
+from app.models import UserProfile, as_utc, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -79,11 +79,9 @@ async def get_or_create_user(
     read from Firestore rather than the token, because a plan is something this
     system grants — an ID token claim would be attacker-influenced.
     """
-    doc = get_db().collection(USERS).document(uid)
-    snap = await doc.get()
+    data = await repo.get_user(uid)
 
-    if snap.exists:
-        data = snap.to_dict() or {}
+    if data:
         tier = normalise_tier(data.get("tier"))
         profile = UserProfile(
             uid=uid,
@@ -93,11 +91,11 @@ async def get_or_create_user(
             tier=tier,
             listings_limit=limit_for(tier),
             listings_used=int(data.get("listings_used") or 0),
-            created_at=data.get("created_at") or utcnow(),
+            created_at=as_utc(data.get("created_at")) or utcnow(),
         )
-        # Google's display name and avatar change; the tier and usage do not get
-        # touched here.
-        await doc.update({"last_seen_at": utcnow(), "email": profile.email, "name": profile.name})
+        # Google's display name and avatar change between sign-ins; the tier and
+        # the usage counter are deliberately not touched here.
+        await repo.touch_user(uid, email=profile.email, name=profile.name)
         return profile
 
     profile = UserProfile(
@@ -109,12 +107,7 @@ async def get_or_create_user(
         listings_limit=limit_for(DEFAULT_TIER),
         listings_used=0,
     )
-    await doc.set(
-        {
-            **profile.model_dump(mode="python", exclude={"uid"}),
-            "last_seen_at": utcnow(),
-        }
-    )
+    await repo.create_user_if_absent(profile)
     log.info("auth: created profile for %s (%s)", uid, profile.email)
     return profile
 
@@ -197,10 +190,7 @@ async def set_tier(uid: str, tier: Tier) -> UserProfile:
     No payment provider is wired up. This exists so a tier can be moved during a
     demo, and the endpoint that calls it says as much.
     """
-    doc = get_db().collection(USERS).document(uid)
-    await doc.update({"tier": tier.value, "listings_limit": limit_for(tier), "updated_at": utcnow()})
-    snap = await doc.get()
-    data = snap.to_dict() or {}
+    data = await repo.set_user_tier(uid, tier.value, limit_for(tier)) or {}
     return UserProfile(
         uid=uid,
         email=data.get("email", ""),
@@ -209,24 +199,29 @@ async def set_tier(uid: str, tier: Tier) -> UserProfile:
         tier=tier,
         listings_limit=limit_for(tier),
         listings_used=int(data.get("listings_used") or 0),
-        created_at=data.get("created_at") or utcnow(),
+        created_at=as_utc(data.get("created_at")) or utcnow(),
     )
 
 
-async def consume_quota(uid: str, count: int = 1) -> None:
-    """Record verifications spent.
+async def consume_quota(uid: str, count: int = 1) -> bool:
+    """Record verifications spent. Returns whether the quota allowed it.
 
-    Uses an atomic increment rather than read-modify-write: two searches running
-    at once would otherwise both read the old value and one increment would
-    vanish, handing out free verifications.
+    Delegates to an atomic ``$inc`` guarded by the plan ceiling in the same
+    filter, rather than read-modify-write: two searches running at once would
+    otherwise both read the old value, both decide there was room, and one
+    increment would vanish — handing out free phone calls.
+
+    A ``False`` return means the plan was already exhausted and the caller must
+    not dial. Anonymous and dev identities are unmetered and always return
+    ``True``.
     """
-    if uid in ("anonymous", "usr_dev") or count <= 0:
-        return
-    from google.cloud.firestore_v1 import Increment
+    if uid in ("anonymous", "usr_dev"):
+        return True
+    if count <= 0:
+        return True
 
-    await get_db().collection(USERS).document(uid).update(
-        {"listings_used": Increment(count), "updated_at": utcnow()}
-    )
+    tier, _ = await repo.read_quota_doc(uid)
+    return await repo.consume_quota_atomic(uid, limit_for(normalise_tier(tier)), count)
 
 
 async def read_quota(uid: str) -> tuple[Tier, int, int]:
@@ -239,7 +234,6 @@ async def read_quota(uid: str) -> tuple[Tier, int, int]:
         tier = Tier.PREMIUM if uid == "usr_dev" else DEFAULT_TIER
         return tier, limit_for(tier), 0
 
-    snap = await get_db().collection(USERS).document(uid).get()
-    data = snap.to_dict() or {}
-    tier = normalise_tier(data.get("tier"))
-    return tier, limit_for(tier), int(data.get("listings_used") or 0)
+    stored_tier, used = await repo.read_quota_doc(uid)
+    tier = normalise_tier(stored_tier)
+    return tier, limit_for(tier), used

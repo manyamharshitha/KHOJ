@@ -17,12 +17,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, Request, status
 
+from app.core.auth import OptionalUser
 from app.core.notifications import notify_custom_agency_lead
 from app.core.plans import CUSTOM_AGENCY_THRESHOLD, plan_catalogue
-from app.core.auth import OptionalUser
-from app.firebase import get_db
 from app.ids import new_id
 from app.models import AgencyLead, AgencyLeadRequest
+from app.repositories import mark_lead_notified, save_agency_lead
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["plans"])
@@ -65,9 +65,7 @@ async def custom_agency_lead(
     )
 
     # Durable first. Everything after this is best-effort.
-    await get_db().collection(AGENCY_LEADS).document(lead.id).set(
-        {k: v for k, v in lead.to_firestore().items() if k != "id"}
-    )
+    await save_agency_lead(lead)
     log.info("lead: custom agency request from %s (%s)", lead.email, lead.id)
 
     result = await notify_custom_agency_lead(
@@ -75,9 +73,7 @@ async def custom_agency_lead(
     )
 
     try:
-        await get_db().collection(AGENCY_LEADS).document(lead.id).update(
-            {"notified": result.delivered, "notification_detail": result.summary()}
-        )
+        await mark_lead_notified(lead.id, result.delivered, result.summary())
     except Exception:  # noqa: BLE001 - bookkeeping must not fail the request
         log.exception("lead: could not record notification status for %s", lead.id)
 

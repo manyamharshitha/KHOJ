@@ -13,10 +13,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from app.config import settings
+from app.core.auth import consume_quota, read_quota
+from app.core.plans import Quota, clip_to_plan
 from app.llm.extractor import extract_listings
 from app.llm.honesty import evaluate_call
 from app.llm.preferences import criteria_summary
 from app.models import (
+    PASTED_SOURCE,
     CallLog,
     CallStatus,
     Listing,
@@ -34,17 +37,15 @@ from app.repositories import (
     get_session,
     listings_for_session,
     mark_listing_called,
+    new_id,
     save_call,
     save_listings,
     save_report,
+    save_verification,
     set_session_status,
     update_session,
-    new_id,
 )
-from app.firebase import get_db
 from app.scraping.crawler import crawl
-from app.core.auth import consume_quota, read_quota
-from app.core.plans import Quota, clip_to_plan
 from app.telephony.calle_dialer import CalleDialer, CalleUnavailable, spoken_int
 from app.telephony.mock_dialer import MockDialer
 from app.telephony.persona import build_task
@@ -64,7 +65,7 @@ def ist_minutes(at: datetime) -> int:
 
 def inside_calling_window(at: datetime | None = None) -> bool:
     """Whether it is currently a decent hour to phone a stranger."""
-    if settings.ignore_call_window:
+    if settings.ignore_call_window or settings.bypass_call_window:
         return True
     minute = ist_minutes(at or utcnow())
     return any(start <= minute < end for start, end in settings.windows_ist)
@@ -86,47 +87,91 @@ async def run_search(session: SearchSession) -> None:
     log.info("[%s] search: %s", sid, criteria_text)
 
     try:
-        await set_session_status(sid, SessionStatus.SCRAPING)
-        pages = await crawl(session.target_sites)
+        listings: list[Listing] = []
 
-        readable = [p for p in pages if p.status in (ListingSourceStatus.OK, ListingSourceStatus.CONTACT_GATED)]
-        for page in pages:
-            if page.status not in (ListingSourceStatus.OK, ListingSourceStatus.CONTACT_GATED):
-                log.warning("[%s] %s: %s — %s", sid, page.site.name, page.status.value, page.note)
+        if session.pasted_content:
+            # The customer supplied the text, so there is nothing to fetch. This
+            # is the path that works when a portal gates its contact numbers,
+            # and on a host where Chromium cannot start it is the only path that
+            # works at all.
+            log.info("[%s] using pasted content (%d chars), skipping the crawler",
+                     sid, len(session.pasted_content))
+            await set_session_status(sid, SessionStatus.EXTRACTING)
 
-        if not readable:
-            await update_session(
-                sid,
-                status=SessionStatus.FAILED.value,
-                error="None of the chosen sites could be read. "
-                + " ".join(p.note for p in pages if p.note),
-            )
-            return
-
-        await set_session_status(sid, SessionStatus.EXTRACTING)
-
-        extracted = await asyncio.gather(
-            *(
-                extract_listings(
+            try:
+                listings = await extract_listings(
                     session_id=sid,
-                    source_site=page.site.name,
-                    page_text=page.text,
-                    page_url=page.final_url or str(page.site.url),
+                    source_site=PASTED_SOURCE,
+                    page_text=session.pasted_content,
+                    page_url=None,
                     criteria=session.criteria,
                     criteria_text=criteria_text,
                     max_listings=settings.max_listings_per_site,
                 )
-                for page in readable
-            ),
-            return_exceptions=True,
-        )
+            except Exception:
+                log.exception("[%s] extraction failed for pasted content", sid)
+                await update_session(
+                    sid,
+                    status=SessionStatus.FAILED.value,
+                    error="That pasted text could not be read as a listing. "
+                    "Check it includes a rent and a contact number.",
+                )
+                return
 
-        listings: list[Listing] = []
-        for page, result in zip(readable, extracted, strict=True):
-            if isinstance(result, BaseException):
-                log.exception("[%s] extraction failed for %s", sid, page.site.name, exc_info=result)
-                continue
-            listings.extend(result)
+            if not listings:
+                await update_session(
+                    sid,
+                    status=SessionStatus.FAILED.value,
+                    error="No listing could be found in the pasted text. Include the "
+                    "rent, the locality and a contact number.",
+                )
+                return
+        else:
+            await set_session_status(sid, SessionStatus.SCRAPING)
+            pages = await crawl(session.target_sites)
+
+            ok = (ListingSourceStatus.OK, ListingSourceStatus.CONTACT_GATED)
+            readable = [p for p in pages if p.status in ok]
+            for page in pages:
+                if page.status not in ok:
+                    log.warning(
+                        "[%s] %s: %s — %s", sid, page.site.name, page.status.value, page.note
+                    )
+
+            if not readable:
+                await update_session(
+                    sid,
+                    status=SessionStatus.FAILED.value,
+                    error="None of the chosen sites could be read. "
+                    + " ".join(p.note for p in pages if p.note),
+                )
+                return
+
+            await set_session_status(sid, SessionStatus.EXTRACTING)
+
+            extracted = await asyncio.gather(
+                *(
+                    extract_listings(
+                        session_id=sid,
+                        source_site=page.site.name,
+                        page_text=page.text,
+                        page_url=page.final_url or str(page.site.url),
+                        criteria=session.criteria,
+                        criteria_text=criteria_text,
+                        max_listings=settings.max_listings_per_site,
+                    )
+                    for page in readable
+                ),
+                return_exceptions=True,
+            )
+
+            for page, result in zip(readable, extracted, strict=True):
+                if isinstance(result, BaseException):
+                    log.exception(
+                        "[%s] extraction failed for %s", sid, page.site.name, exc_info=result
+                    )
+                    continue
+                listings.extend(result)
 
         kept, dropped = filter_hard_constraints(listings, session.criteria)
         for listing, reason in dropped:
@@ -250,10 +295,10 @@ async def _write_verification(
 ) -> None:
     """Persist the customer-facing record of one verification.
 
-    Lives at ``search_sessions/{session_id}/verifications/{listing_id}`` — a
-    subcollection rather than a top-level one, because a verification has no
-    meaning outside the search that produced it, and this way deleting a session
-    takes its evidence with it.
+    Keyed ``{session_id}:{listing_id}`` in the ``verifications`` collection.
+    Firestore held these in a subcollection under the session; Mongo has no
+    subcollections, so the parent is folded into the key — which keeps the same
+    one-record-per-listing-per-search guarantee.
 
     Written even for a call that never connected. "We rang and nobody answered"
     is a real result the customer paid for; leaving a silent gap would look like
@@ -286,14 +331,7 @@ async def _write_verification(
     )
 
     try:
-        await (
-            get_db()
-            .collection("search_sessions")
-            .document(call.session_id)
-            .collection("verifications")
-            .document(listing.id)
-            .set(record.to_firestore())
-        )
+        await save_verification(call.session_id, record)
     except Exception:  # noqa: BLE001 - the call log is already saved; this is extra
         log.exception("[%s] could not write verification record", call.id)
 
@@ -312,11 +350,27 @@ async def _call_one(session: SearchSession, listing: Listing) -> None:
             phone_dialed=phone,
         )
 
-        if await called_recently(phone, settings.number_cooldown_days):
+        if settings.bypass_call_window:
+            # Logged at warning level deliberately. Silently ignoring the
+            # cooldown is how a test configuration reaches production and starts
+            # ringing the same broker every hour.
+            log.warning(
+                "[%s] BYPASS_CALL_WINDOW is on — window and %d-day cooldown skipped for %s",
+                session.id,
+                settings.number_cooldown_days,
+                phone,
+            )
+        elif await called_recently(phone, settings.number_cooldown_days):
             call.call_status = CallStatus.BLOCKED
             call.error = f"Already called within {settings.number_cooldown_days} days"
             await create_call(call)
-            log.info("[%s] skipped %s — called recently", session.id, phone)
+            log.info(
+                "[%s] skipped %s — called within the last %d days. "
+                "Set BYPASS_CALL_WINDOW=true to dial it again while testing.",
+                session.id,
+                phone,
+                settings.number_cooldown_days,
+            )
             return
 
         await create_call(call)

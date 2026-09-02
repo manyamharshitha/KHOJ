@@ -1,4 +1,10 @@
-"""Firebase Admin initialisation: Firestore for documents, Storage for audio.
+"""Firebase Admin initialisation: ID-token verification and Storage.
+
+    Documents no longer live here. Firestore Enterprise edition speaks the
+    MongoDB wire protocol, so persistence moved to ``app.core.db`` and
+    ``app.repositories``; this module keeps only the two things the Admin SDK is
+    still the right tool for — verifying Google ID tokens and signing URLs for
+    call recordings.
 
 Built lazily and exactly once. ``initialize_app`` raises on a second call, and a
 watch-mode dev server re-imports modules freely, so the guard is load-bearing
@@ -9,13 +15,11 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import os
 from functools import lru_cache
 from pathlib import Path
 
 import firebase_admin
-from firebase_admin import credentials, firestore_async, storage
-from google.cloud.firestore_v1.async_client import AsyncClient
+from firebase_admin import credentials, storage
 
 from app.config import settings
 
@@ -52,40 +56,6 @@ def _app() -> firebase_admin.App:
     log.info("firebase: using application default credentials")
     return firebase_admin.initialize_app(options=options)
 
-
-def emulator_host() -> str | None:
-    """The local Firestore emulator, if one is configured."""
-    return os.environ.get("FIRESTORE_EMULATOR_HOST") or None
-
-
-@lru_cache(maxsize=1)
-def get_db() -> AsyncClient:
-    """Async Firestore client.
-
-    Async matters here: this backend holds many calls open at once, and a
-    blocking driver would stall the event loop those calls are running on.
-
-    Against the emulator the client is built directly with anonymous
-    credentials. ``initialize_app()`` with no credential still resolves
-    Application Default Credentials — so on a laptop with no gcloud login it
-    spends thirty seconds probing an unreachable metadata server and then fails,
-    even though the emulator needs no authentication at all.
-    """
-    host = emulator_host()
-    if host:
-        from google.auth.credentials import AnonymousCredentials
-        from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
-
-        project = settings.firebase_project_id or os.environ.get(
-            "GOOGLE_CLOUD_PROJECT", "khoj-local"
-        )
-        log.info("firebase: using Firestore emulator at %s (project %s)", host, project)
-        return FirestoreAsyncClient(project=project, credentials=AnonymousCredentials())
-
-    # ``firestore_async.client``, not ``firestore.async_client`` — the latter
-    # does not exist and fails only at the first database call, a long way from
-    # where the mistake was made.
-    return firestore_async.client(app=_app())
 
 
 @lru_cache(maxsize=1)

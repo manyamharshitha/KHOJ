@@ -25,3 +25,12 @@ playwright>=1.48
 httpx>=0.27
 tenacity>=9.0
 anyio>=4.6
+
+# Database — Firestore Enterprise edition speaks the MongoDB wire protocol, so
+# the data layer is a MongoDB driver. firebase-admin stays, but only for
+# verifying Google ID tokens; it no longer touches documents.
+motor>=3.6.0
+pymongo>=4.8.0
+# In-memory Motor stand-in. The Firebase CLI emulator does not implement the
+# MongoDB wire protocol, so repository tests run against this instead.
+mongomock-motor>=0.0.30

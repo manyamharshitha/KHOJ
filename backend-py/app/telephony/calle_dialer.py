@@ -140,6 +140,88 @@ def verification_schema(criteria: SearchCriteria) -> dict[str, Any]:
             **tri,
             "description": "Whether they agreed to the call being recorded when asked at the start.",
         },
+        # --- commitment and cost, beyond the headline rent -----------------
+        # These are the terms that decide whether a flat is actually affordable.
+        # A cheap rent with an 11-month lock-in, a two-month notice period and a
+        # 10% annual hike costs more than a dearer flat with none of that, and
+        # none of it ever appears in a listing.
+        "available_from": {
+            "type": "string",
+            "description": (
+                "When the flat can actually be moved into, as they said it — "
+                "'immediately', '1st of next month', 'after 15 days', a date. "
+                "Empty string if never stated."
+            ),
+        },
+        "lock_in_months": {
+            "type": "string",
+            "description": (
+                "Minimum lease or lock-in period in months as a plain integer "
+                "string, e.g. '11'. '0' if they said there is none. Empty string "
+                "if never stated."
+            ),
+        },
+        "notice_period_months": {
+            "type": "string",
+            "description": (
+                "Notice required before vacating, in months, e.g. '2'. Empty "
+                "string if never stated."
+            ),
+        },
+        "rent_escalation": {
+            "type": "string",
+            "description": (
+                "Annual rent increase as they stated it — '5%', '10 percent', "
+                "'no increase'. Empty string if never stated."
+            ),
+        },
+        "maintenance_includes": {
+            "type": "string",
+            "description": (
+                "What the maintenance charge actually covers — water, common "
+                "area, lift, security, club house. Empty string if not discussed."
+            ),
+        },
+        "agreement_charges": {
+            "type": "string",
+            "description": (
+                "Who pays for the rental agreement, stamp duty or registration, "
+                "and roughly how much. Empty string if not discussed."
+            ),
+        },
+
+        # --- what the flat physically has ----------------------------------
+        "parking": {
+            "type": "string",
+            "description": (
+                "Parking as described — car, two-wheeler, covered or open, "
+                "included in rent or charged extra. Empty string if not "
+                "discussed."
+            ),
+        },
+        "power_backup": {
+            "type": "string",
+            "description": (
+                "Power backup: generator, inverter, none, and whether it covers "
+                "the flat or only common areas. Empty string if not discussed."
+            ),
+        },
+        "floor_and_lift": {
+            "type": "string",
+            "description": (
+                "Which floor the flat is on and whether the building has a lift, "
+                "e.g. '3rd floor, lift available'. Empty string if not discussed."
+            ),
+        },
+        "furnishing_included": {
+            "type": "string",
+            "description": (
+                "What furniture and appliances actually come with the flat — "
+                "beds, wardrobes, AC, geyser, fridge, modular kitchen. Empty "
+                "string if not discussed."
+            ),
+        },
+
         "notes": {
             "type": "string",
             "description": "One short sentence of context a tenant would want. Empty if none.",
@@ -232,6 +314,16 @@ def _build_qna(
         ("water_supply", "What is the water supply like?"),
         ("restrictions", "Are there any restrictions on tenants?"),
         ("is_broker", "Are you the owner, or handling it for them?"),
+        ("available_from", "When is the flat available to move into?"),
+        ("lock_in_months", "Is there a minimum lease or lock-in period?"),
+        ("notice_period_months", "How much notice is needed before vacating?"),
+        ("rent_escalation", "Is there an annual rent increase?"),
+        ("maintenance_includes", "What does the maintenance charge cover?"),
+        ("agreement_charges", "Who pays for the agreement and registration?"),
+        ("parking", "Is there parking, and is it included?"),
+        ("power_backup", "Is there power backup?"),
+        ("floor_and_lift", "Which floor is it on, and is there a lift?"),
+        ("furnishing_included", "What furniture and appliances are included?"),
     ]
     labels += [
         (f"custom_{i}", question) for i, question in enumerate(criteria.custom_questions[:8])
