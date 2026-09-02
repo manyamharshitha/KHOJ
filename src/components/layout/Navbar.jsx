@@ -140,26 +140,21 @@ const MobileMenu = styled(motion.div)`
     flex-direction: column;
     gap: 0.2rem;
   }
+`;
 
-  a {
-    font-family: 'Fraunces', Georgia, serif;
-    font-size: 1.3rem;
-    color: ${({ theme }) => theme.ink};
-    text-decoration: none;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid ${({ theme }) => theme.rule};
-  }
+const MenuLink = styled(Link)`
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 1.3rem;
+  color: ${({ theme }) => theme.ink};
+  text-decoration: none;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid ${({ theme }) => theme.rule};
 `;
 
 const MobileActions = styled.div`
   display: flex;
   gap: 0.8rem;
   margin-top: 1.4rem;
-
-  a {
-    border-bottom: none;
-    padding: 0;
-  }
 `;
 
 const links = [
@@ -254,9 +249,9 @@ const Navbar = () => {
             transition={{ duration: 0.25, ease: [0.2, 0.8, 0.2, 1] }}
           >
             {links.map((l) => (
-              <Link key={l.label} to={l.to}>
+              <MenuLink key={l.label} to={l.to}>
                 {l.label}
-              </Link>
+              </MenuLink>
             ))}
             <MobileActions>
               {pathname !== '/login' && (

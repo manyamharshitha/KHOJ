@@ -10,12 +10,12 @@ import {
   Shell,
   BrandPanel,
   BrandNoise,
-  BrandWatermark,
+  BrandStars,
   BrandMark,
-  BrandQuote,
-  BrandCite,
-  GlobeWrap,
-  Trust,
+  BrandCenter,
+  BrandGlobe,
+  BrandWordmark,
+  BrandTagline,
   FormPanel,
   FormCard,
   MobileMark,
@@ -74,16 +74,15 @@ const Signup = () => {
     <Shell>
       <BrandPanel>
         <BrandNoise />
-        <BrandWatermark>khoj</BrandWatermark>
-        <GlobeWrap>
-          <Globe />
-        </GlobeWrap>
+        <BrandStars />
         <BrandMark to="/">khoj</BrandMark>
-        <div>
-          <Trust />
-          <BrandQuote>Pick your questions. Khoj checks the listings and calls the ones that qualify.</BrandQuote>
-          <BrandCite>Where families belong</BrandCite>
-        </div>
+        <BrandCenter>
+          <BrandGlobe>
+            <Globe />
+          </BrandGlobe>
+          <BrandWordmark>khoj</BrandWordmark>
+          <BrandTagline>Where families belong</BrandTagline>
+        </BrandCenter>
       </BrandPanel>
 
       <FormPanel>

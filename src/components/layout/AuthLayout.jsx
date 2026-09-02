@@ -14,16 +14,12 @@ export const Shell = styled.div`
 
 export const BrandPanel = styled.div`
   position: relative;
-  padding: 0 3.5rem;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: center;
   color: ${({ theme }) => theme.onDark};
   overflow: hidden;
-  background:
-    radial-gradient(circle at 18% 18%, ${({ theme }) => theme.accent}4d, transparent 46%),
-    radial-gradient(circle at 88% 82%, ${({ theme }) => theme.gold}3d, transparent 42%),
-    linear-gradient(165deg, #1b3462 0%, #0f2244 55%, #081530 100%);
+  background: radial-gradient(120% 90% at 50% 8%, #171a21 0%, #0a0b0e 48%, #000000 100%);
 
   @media (max-width: 960px) {
     display: none;
@@ -39,30 +35,26 @@ export const BrandNoise = styled.div`
   background-size: 22px 22px;
 `;
 
-export const GlobeWrap = styled.div`
+export const BrandStars = styled.div`
   position: absolute;
-  right: -8%;
-  bottom: -12%;
-  width: 60%;
-  max-width: 460px;
+  inset: 0;
   pointer-events: none;
-  opacity: 0.9;
-`;
-
-export const BrandWatermark = styled.span`
-  position: absolute;
-  right: 6%;
-  bottom: 5%;
-  font-family: 'Fraunces', Georgia, serif;
-  font-weight: 400;
-  font-size: clamp(3.5rem, 9vw, 7rem);
-  line-height: 1;
-  letter-spacing: -0.03em;
-  color: ${({ theme }) => theme.onDark};
-  opacity: 0.07;
-  pointer-events: none;
-  user-select: none;
-  white-space: nowrap;
+  background-image:
+    radial-gradient(1.6px 1.6px at 8% 20%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1.2px 1.2px at 17% 66%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1.8px 1.8px at 26% 10%, rgba(255, 255, 255, 0.45), transparent),
+    radial-gradient(1.3px 1.3px at 35% 82%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1.5px 1.5px at 45% 28%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1.2px 1.2px at 57% 74%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1.7px 1.7px at 65% 14%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1.3px 1.3px at 73% 56%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1.6px 1.6px at 83% 24%, rgba(255, 255, 255, 0.45), transparent),
+    radial-gradient(1.2px 1.2px at 90% 68%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1.4px 1.4px at 12% 90%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1.3px 1.3px at 61% 92%, rgba(255, 255, 255, 0.28), transparent),
+    radial-gradient(1.5px 1.5px at 95% 43%, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1.2px 1.2px at 4% 52%, rgba(255, 255, 255, 0.32), transparent),
+    radial-gradient(1.4px 1.4px at 39% 5%, rgba(255, 255, 255, 0.4), transparent);
 `;
 
 export const BrandMark = styled(Link)`
@@ -70,72 +62,43 @@ export const BrandMark = styled(Link)`
   top: 6.5rem;
   left: 3.5rem;
   font-family: 'Fraunces', Georgia, serif;
-  font-size: 1.3rem;
+  font-size: 1.1rem;
   letter-spacing: -0.01em;
-  color: ${({ theme }) => theme.onDark};
+  color: ${({ theme }) => theme.onDark2};
   text-decoration: none;
   z-index: 1;
 `;
 
-export const TrustRow = styled.div`
+export const BrandCenter = styled.div`
   position: relative;
   z-index: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.9rem;
-  margin-bottom: 1.6rem;
+  justify-content: center;
+  text-align: center;
 `;
 
-export const AvatarStack = styled.div`
-  display: flex;
-
-  span {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.62rem;
-    font-weight: 500;
-    color: #0f2244;
-    border: 2px solid #0f2244;
-    margin-left: -8px;
-  }
-
-  span:first-child {
-    margin-left: 0;
-  }
+export const BrandGlobe = styled.div`
+  width: clamp(320px, 34vw, 580px);
+  margin-bottom: -1.4rem;
+  pointer-events: none;
 `;
 
-export const TrustCaption = styled.span`
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.66rem;
-  letter-spacing: 0.06em;
-  color: ${({ theme }) => theme.onDark2};
-`;
-
-export const BrandQuote = styled.p`
-  position: relative;
-  z-index: 1;
+export const BrandWordmark = styled.span`
   font-family: 'Fraunces', Georgia, serif;
   font-weight: 400;
-  font-size: clamp(1.2rem, 2vw, 1.55rem);
-  line-height: 1.42;
-  letter-spacing: -0.01em;
-  max-width: 26ch;
-  margin: 0;
+  font-size: clamp(2.1rem, 3.6vw, 2.6rem);
+  letter-spacing: -0.02em;
+  color: ${({ theme }) => theme.onDark};
 `;
 
-export const BrandCite = styled.span`
-  position: relative;
-  z-index: 1;
+export const BrandTagline = styled.span`
   display: block;
-  margin-top: 1.3rem;
+  margin-top: 0.7rem;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.64rem;
-  letter-spacing: 0.12em;
+  font-size: 0.66rem;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: ${({ theme }) => theme.onDark2};
 `;
@@ -331,24 +294,4 @@ export const GoogleIcon = () => (
       d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .9 4.97L3.95 7.3C4.66 5.17 6.65 3.58 9 3.58z"
     />
   </svg>
-);
-
-const AVATARS = [
-  { bg: '#F6D998', label: 'A' },
-  { bg: '#C9DCF6', label: 'R' },
-  { bg: '#F2C7C0', label: 'S' },
-  { bg: '#CDEAD9', label: 'M' },
-];
-
-export const Trust = () => (
-  <TrustRow>
-    <AvatarStack>
-      {AVATARS.map((a) => (
-        <span key={a.label} style={{ background: a.bg }}>
-          {a.label}
-        </span>
-      ))}
-    </AvatarStack>
-    <TrustCaption>Renters · Families · First-time movers</TrustCaption>
-  </TrustRow>
 );
