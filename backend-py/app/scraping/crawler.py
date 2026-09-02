@@ -237,13 +237,29 @@ async def crawl(sites: list[TargetSite]) -> list[PageResult]:
 
     gate = asyncio.Semaphore(settings.scrape_concurrency)
 
-    async with browser_session() as browser:
+    try:
+        async with browser_session() as browser:
 
-        async def one(site: TargetSite) -> PageResult:
-            async with gate:
-                return await _read_page(browser, site)
+            async def one(site: TargetSite) -> PageResult:
+                async with gate:
+                    return await _read_page(browser, site)
 
-        results = await asyncio.gather(*(one(s) for s in sites), return_exceptions=True)
+            results = await asyncio.gather(*(one(s) for s in sites), return_exceptions=True)
+    except Exception as exc:  # noqa: BLE001 - the browser itself would not start
+        # Chromium missing or out of memory. Common on small hosts, where a
+        # headless browser does not fit in 512 MB. Report it per site with a
+        # usable next step rather than failing the whole search with a stack
+        # trace the customer cannot act on.
+        log.error("crawler: could not start a browser (%s)", exc)
+        note = (
+            "The page reader could not start on this server — it needs Chromium "
+            "and more memory than is available. Paste the listing text or a "
+            "listing URL instead."
+        )
+        return [
+            PageResult(site=site, status=ListingSourceStatus.ERROR, note=note)
+            for site in sites
+        ]
 
     out: list[PageResult] = []
     for site, result in zip(sites, results, strict=True):

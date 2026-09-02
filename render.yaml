@@ -1,0 +1,83 @@
+# Render blueprint for the Khoj backend.
+#
+# Commit this and Render can create the service from it, so the settings are
+# reviewable rather than living in a web form nobody can diff.
+#
+# The backend must run as a long-lived process: CALL-E's create_and_wait blocks
+# while a call is in progress, and the search pipeline runs in the background
+# after the HTTP request has returned. That rules out serverless hosts.
+
+services:
+  - type: web
+    name: khoj-api
+    runtime: python
+    plan: starter          # free spins down mid-call; see README
+    region: singapore      # closest to Indian mobile networks
+    rootDir: backend-py
+    branch: main
+
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+      # --- who we are -------------------------------------------------
+      - key: ENV
+        value: prod
+      # Set to the Render URL once the service exists.
+      - key: PUBLIC_URL
+        sync: false
+      # The Vercel origin. CORS is an explicit allowlist, so a wrong value here
+      # means every browser request fails preflight.
+      - key: FRONTEND_ORIGINS
+        sync: false
+
+      # --- firebase ---------------------------------------------------
+      # Upload the service account JSON as a Render Secret File named
+      # serviceAccountKey.json; Render mounts it at /etc/secrets/.
+      - key: FIREBASE_CREDENTIALS_FILE
+        value: /etc/secrets/serviceAccountKey.json
+      # Must match the frontend's VITE_FIREBASE_PROJECT_ID, or every ID token
+      # is rejected as issued for another project.
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false
+
+      # --- telephony --------------------------------------------------
+      # Leave as mock until CALL-E credits are in hand; the pipeline runs
+      # end to end either way.
+      - key: TELEPHONY_PROVIDER
+        value: mock
+      - key: CALLE_API_KEY
+        sync: false
+
+      # --- llm --------------------------------------------------------
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+
+      # --- auth -------------------------------------------------------
+      - key: AUTH_REQUIRED
+        value: "true"
+
+      # --- admin notifications ---------------------------------------
+      - key: ADMIN_NOTIFICATION_WEBHOOK_URL
+        sync: false
+      - key: ADMIN_NOTIFICATION_EMAIL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+
+      # --- call policy ------------------------------------------------
+      - key: MAX_CONCURRENT_CALLS
+        value: "3"
+      - key: NUMBER_COOLDOWN_DAYS
+        value: "7"
+      - key: IGNORE_CALL_WINDOW
+        value: "false"
