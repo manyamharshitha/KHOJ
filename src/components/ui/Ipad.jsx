@@ -48,7 +48,20 @@ const Chrome = styled.svg`
   height: 100%;
 `;
 
-/** The iPad device frame, empty by default — pass children to fill the screen with real content instead of a screenshot. */
+const PowerButton = styled.span`
+  position: absolute;
+  z-index: 3;
+  top: -1.5%;
+  right: 13%;
+  height: 1.3%;
+  width: 9%;
+  min-height: 3px;
+  border-radius: 3px 3px 1px 1px;
+  background: linear-gradient(180deg, ${({ theme }) => theme.rule2}, ${({ theme }) => theme.rule});
+  box-shadow: 0 -1.5px 3px rgba(0, 0, 0, 0.35), inset 0 0.5px 0 rgba(255, 255, 255, 0.1);
+`;
+
+/** The iPad device frame, empty by default — pass children to fill the screen with real content instead of a screenshot. The top button is decorative chrome only. */
 const Ipad = ({ children, className, style, ...props }) => (
   <Frame className={className} style={style} {...props}>
     {children && <ScreenContent>{children}</ScreenContent>}
@@ -82,6 +95,7 @@ const Ipad = ({ children, className, style, ...props }) => (
       />
       <circle cx={PAD_WIDTH / 2} cy={BEZEL / 2} r={CAMERA_R} fill="currentColor" opacity="0.55" />
     </Chrome>
+    <PowerButton aria-hidden="true" />
   </Frame>
 );
 

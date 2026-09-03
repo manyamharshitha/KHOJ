@@ -108,15 +108,30 @@ const Title = styled.h2`
   color: ${({ theme }) => theme.ink};
 `;
 
-/* ---------- mobile & tablet / click-driven device ---------- */
+/* ---------- mobile & tablet / scroll-tilt + click-driven device ---------- */
 
-const PhoneLayout = styled.div`
-  max-width: 420px;
-  margin: 0 auto;
+const PhoneScrollStage = styled.div`
+  position: relative;
+  height: 200vh;
+`;
+
+const PhoneSticky = styled.div`
+  position: sticky;
+  top: 0;
+  height: 100vh;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2.25rem;
+  justify-content: center;
+  overflow: hidden;
+`;
+
+const PhoneRig = styled.div`
+  perspective: 1200px;
+`;
+
+const PhoneTilt = styled(motion.div)`
+  transform-origin: 50% 100%;
+  transform-style: preserve-3d;
 `;
 
 const PhoneStage = styled.div`
@@ -177,43 +192,172 @@ const TapHint = styled.span`
   margin-top: ${({ $lg }) => ($lg ? '2.2rem' : '1.5rem')};
 `;
 
+/* ---------- boot sequence: off -> welcome (multi-language) -> home ---------- */
+
+const BOOT_GREETINGS = [
+  { text: 'Welcome to Khoj', lang: 'EN' },
+  { text: 'खोज में आपका स्वागत है', lang: 'HI' },
+  { text: 'Bienvenido a Khoj', lang: 'ES' },
+  { text: 'Bienvenue chez Khoj', lang: 'FR' },
+  { text: 'Willkommen bei Khoj', lang: 'DE' },
+  { text: 'Khojへようこそ', lang: 'JA' },
+];
+
+const GREETING_INTERVAL = 1200;
+
+const OffScreen = styled.div`
+  width: 100%;
+  height: 100%;
+  background: #050608;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+`;
+
+const OffDot = styled(motion.span)`
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: ${({ theme }) => theme.onDark2};
+`;
+
+const WelcomeScreen = styled.div`
+  width: 100%;
+  height: 100%;
+  background: #050608;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: ${({ $lg }) => ($lg ? '1.4rem' : '1rem')};
+  padding: 0 1.5rem;
+`;
+
+const WelcomeText = styled(motion.p)`
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 400;
+  color: ${({ theme }) => theme.onDark};
+  font-size: ${({ $lg }) => ($lg ? '1.6rem' : '1rem')};
+  line-height: 1.3;
+  text-align: center;
+  margin: 0;
+`;
+
+const WelcomeDots = styled.div`
+  display: flex;
+  gap: 0.4rem;
+`;
+
+const WelcomeDot = styled.span`
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: ${({ $active }) => ($active ? 'rgba(244, 246, 248, 0.9)' : 'rgba(244, 246, 248, 0.25)')};
+  transition: background 0.25s ease;
+`;
+
 const DeviceSteps = ({ Frame, stageWidth, large }) => {
+  const stageRef = useRef(null);
+  const bootedRef = useRef(false);
+  const [phase, setPhase] = useState('off'); // 'off' | 'welcome' | 'home'
+  const [greetingIndex, setGreetingIndex] = useState(0);
   const [activeStep, setActiveStep] = useState(0);
   const step = steps[activeStep];
 
+  const { scrollYProgress } = useScroll({
+    target: stageRef,
+    offset: ['start start', 'end end'],
+  });
+
+  const rotateX = useTransform(scrollYProgress, [0, 0.3, 0.7, 1], [-46, 0, 0, -46]);
+  const scale = useTransform(scrollYProgress, [0, 0.3, 0.7, 1], [0.88, 1, 1, 0.88]);
+
   const advance = () => setActiveStep((i) => (i + 1) % steps.length);
 
+  useMotionValueEvent(scrollYProgress, 'change', (v) => {
+    if (bootedRef.current || v < 0.05) return;
+    bootedRef.current = true;
+    const reduceMotion =
+      typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    setPhase(reduceMotion ? 'home' : 'welcome');
+  });
+
+  useEffect(() => {
+    if (phase !== 'welcome') return undefined;
+    if (greetingIndex >= BOOT_GREETINGS.length - 1) {
+      const timeout = setTimeout(() => setPhase('home'), GREETING_INTERVAL + 700);
+      return () => clearTimeout(timeout);
+    }
+    const timeout = setTimeout(() => setGreetingIndex((i) => i + 1), GREETING_INTERVAL);
+    return () => clearTimeout(timeout);
+  }, [phase, greetingIndex]);
+
   return (
-    <PhoneLayout>
-      <ScrollReveal>
-        <PhoneStage $width={stageWidth}>
-          <Frame>
-            <PhoneScreenInner type="button" $lg={large} onClick={advance} aria-label="Show next step">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={step.n}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.25, ease: [0.2, 0.8, 0.2, 1] }}
-                >
-                  <PhoneBadge $lg={large}>STEP {step.n}</PhoneBadge>
-                  <Label style={{ marginBottom: '0.4rem', display: 'block' }}>{step.label}</Label>
-                  <PhoneTitle $lg={large}>{step.title}</PhoneTitle>
-                  <PhoneDesc $lg={large}>{step.desc}</PhoneDesc>
-                  <Dots>
-                    {steps.map((s, i) => (
-                      <Dot key={s.n} $active={i === activeStep} />
-                    ))}
-                  </Dots>
-                </motion.div>
-              </AnimatePresence>
-              <TapHint $lg={large}>Tap to see the next step</TapHint>
-            </PhoneScreenInner>
-          </Frame>
-        </PhoneStage>
-      </ScrollReveal>
-    </PhoneLayout>
+    <PhoneScrollStage ref={stageRef}>
+      <PhoneSticky>
+        <PhoneRig>
+          <PhoneTilt style={{ rotateX, scale }}>
+            <PhoneStage $width={stageWidth}>
+              <Frame>
+                {phase === 'off' && (
+                  <OffScreen>
+                    <OffDot
+                      animate={{ opacity: [0.25, 0.75, 0.25] }}
+                      transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+                    />
+                  </OffScreen>
+                )}
+                {phase === 'welcome' && (
+                  <WelcomeScreen $lg={large}>
+                    <AnimatePresence mode="wait">
+                      <WelcomeText
+                        key={greetingIndex}
+                        $lg={large}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.45, ease: [0.2, 0.8, 0.2, 1] }}
+                      >
+                        {BOOT_GREETINGS[greetingIndex].text}
+                      </WelcomeText>
+                    </AnimatePresence>
+                    <WelcomeDots>
+                      {BOOT_GREETINGS.map((g, i) => (
+                        <WelcomeDot key={g.lang} $active={i === greetingIndex} />
+                      ))}
+                    </WelcomeDots>
+                  </WelcomeScreen>
+                )}
+                {phase === 'home' && (
+                  <PhoneScreenInner type="button" $lg={large} onClick={advance} aria-label="Show next step">
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={step.n}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.25, ease: [0.2, 0.8, 0.2, 1] }}
+                      >
+                        <PhoneBadge $lg={large}>STEP {step.n}</PhoneBadge>
+                        <Label style={{ marginBottom: '0.4rem', display: 'block' }}>{step.label}</Label>
+                        <PhoneTitle $lg={large}>{step.title}</PhoneTitle>
+                        <PhoneDesc $lg={large}>{step.desc}</PhoneDesc>
+                        <Dots>
+                          {steps.map((s, i) => (
+                            <Dot key={s.n} $active={i === activeStep} />
+                          ))}
+                        </Dots>
+                      </motion.div>
+                    </AnimatePresence>
+                    <TapHint $lg={large}>Tap to see the next step</TapHint>
+                  </PhoneScreenInner>
+                )}
+              </Frame>
+            </PhoneStage>
+          </PhoneTilt>
+        </PhoneRig>
+      </PhoneSticky>
+    </PhoneScrollStage>
   );
 };
 

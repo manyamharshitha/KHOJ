@@ -46,7 +46,20 @@ const Chrome = styled.svg`
   transform: translateZ(0);
 `;
 
-/** The iPhone device frame, empty by default — pass children to fill the screen with real content instead of a screenshot. */
+const PowerButton = styled.span`
+  position: absolute;
+  z-index: 3;
+  right: -2.1%;
+  top: 20.5%;
+  width: 1.7%;
+  height: 8.5%;
+  min-width: 3px;
+  border-radius: 1px 3px 3px 1px;
+  background: linear-gradient(90deg, ${({ theme }) => theme.rule}, ${({ theme }) => theme.rule2});
+  box-shadow: 1.5px 0 3px rgba(0, 0, 0, 0.35), inset -0.5px 0 0 rgba(255, 255, 255, 0.1);
+`;
+
+/** The iPhone device frame, empty by default — pass children to fill the screen with real content instead of a screenshot. The side button is decorative chrome only. */
 const Iphone = ({ children, className, style, ...props }) => (
   <Frame className={className} style={style} {...props}>
     {children && <ScreenContent>{children}</ScreenContent>}
@@ -72,6 +85,7 @@ const Iphone = ({ children, className, style, ...props }) => (
         opacity="0.55"
       />
     </Chrome>
+    <PowerButton aria-hidden="true" />
   </Frame>
 );
 
