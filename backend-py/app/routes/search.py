@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
 from app.config import settings
 from app.core.auth import OptionalUser, read_quota, require_user
-from app.core.plans import Quota, clip_to_plan, limit_for
+from app.core.plans import Quota, clip_to_plan
 from app.llm.preferences import parse_preferences
 from app.models import (
     PASTED_PLACEHOLDER_URL,
@@ -29,13 +29,18 @@ from app.ranking import rank_listings
 from app.repositories import (
     calls_for_session,
     create_session,
+    get_cached_locality,
     get_session,
+    list_recent_sessions,
+    list_sessions_for_customer,
     listings_for_session,
     new_id,
     reports_for_session,
+    save_cached_locality,
     set_session_status,
 )
 from app.scraping.sites import SITES, resolve_targets
+from app.services.scraper import locality_context
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["search"])
@@ -159,6 +164,49 @@ async def _search_then_call(session: SearchSession) -> None:
             return
 
 
+@router.get("/sessions")
+async def list_history(
+    user: OptionalUser = None,
+    limit: int = Query(default=25, ge=1, le=100),
+) -> dict[str, object]:
+    """Past searches, newest first — the history behind the results.
+
+    Signed in, this is that customer's own searches. Signed out (or with
+    ``AUTH_REQUIRED`` off) it is simply the most recent ones, because a session
+    created anonymously carries no customer id and filtering by one would show
+    an empty history for exactly the setup being demonstrated.
+
+    A summary only. Listings, transcripts and honesty reports stay behind
+    ``/api/session/{id}/results`` rather than being fanned out here, so opening
+    a history page does not read every transcript ever recorded.
+    """
+    account = await require_user(user)
+    if account.uid and account.uid != "anonymous":
+        sessions = await list_sessions_for_customer(account.uid, limit=limit)
+    else:
+        sessions = await list_recent_sessions(limit=limit)
+
+    return {
+        "sessions": [
+            {
+                "session_id": x.id,
+                "prompt": x.prompt,
+                "status": x.status.value,
+                "error": x.error,
+                "listings_found": x.listings_found,
+                "listings_matched": x.listings_matched,
+                "calls_placed": x.calls_placed,
+                "calls_completed": x.calls_completed,
+                "created_at": x.created_at,
+                "updated_at": x.updated_at,
+                "results_url": f"/api/session/{x.id}/results",
+            }
+            for x in sessions
+        ],
+        "count": len(sessions),
+    }
+
+
 @router.get("/session/{session_id}")
 async def read_session(session_id: str) -> dict[str, object]:
     """Status and the ranked listings so far."""
@@ -174,6 +222,50 @@ async def read_session(session_id: str) -> dict[str, object]:
             for x in listings
         ],
     }
+
+
+@router.get("/session/{session_id}/locality")
+async def session_locality(
+    session_id: str,
+    refresh: bool = Query(default=False, description="Ignore the cache and re-fetch."),
+) -> dict[str, object]:
+    """What people who live in this area say about it.
+
+    Context, not verification. The phone call establishes the flat; this is
+    unverified opinion from public Reddit posts, and it is labelled that way in
+    the response so the UI cannot present it with the same weight as a call.
+
+    The locality comes from the session's own listings, so this needs no
+    parameters the customer would have to type.
+    """
+    session = await get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="No such search.")
+
+    listings = await listings_for_session(session_id)
+    locality = next((x.locality for x in listings if x.locality), None)
+    locality = locality or (session.criteria.localities[0] if session.criteria.localities else None)
+    city = session.criteria.city
+
+    if not locality:
+        return {
+            "locality": None,
+            "context": None,
+            "note": "No locality could be identified for this search.",
+        }
+
+    if not refresh:
+        cached = await get_cached_locality(locality, city)
+        if cached:
+            return {"locality": locality, "context": cached, "cached": True}
+
+    context = (await locality_context(locality, city)).to_document()
+    try:
+        await save_cached_locality(locality, city, context)
+    except Exception:  # noqa: BLE001 - a cache miss must not fail the request
+        log.exception("locality: could not cache %s", locality)
+
+    return {"locality": locality, "context": context, "cached": False}
 
 
 @router.post("/session/{session_id}/call-all", status_code=status.HTTP_202_ACCEPTED)

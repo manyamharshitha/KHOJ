@@ -61,6 +61,7 @@ CALLS = "calls"
 ANALYSES = "analyses"
 VERIFICATIONS = "verifications"
 AGENCY_LEADS = "agency_leads"
+LOCALITY_CACHE = "locality_cache"
 
 #: Written by ``Listing.to_document`` for the index and recomputed in memory by
 #: ``rank_listings``. Stripped on read: the model declares it as a property and
@@ -229,6 +230,17 @@ async def set_session_status(
     session_id: str, status: SessionStatus, error: str | None = None
 ) -> None:
     await update_session(session_id, status=status.value, error=error)
+
+
+async def list_recent_sessions(limit: int = 25) -> list[SearchSession]:
+    """The most recent searches, whoever ran them.
+
+    Used when nobody is signed in — with ``AUTH_REQUIRED`` off a session is
+    stored with ``customer_id=None``, so filtering by customer would return an
+    empty history for the very setup that is being demonstrated.
+    """
+    cursor = get_db()[SESSIONS].find({}).sort([("created_at", DESCENDING)]).limit(limit)
+    return [_model(SearchSession, d) async for d in cursor]
 
 
 async def list_sessions_for_customer(customer_id: str, limit: int = 25) -> list[SearchSession]:
@@ -485,3 +497,40 @@ async def list_agency_leads(limit: int = 50) -> list[AgencyLead]:
         .to_list(length=limit)
     )
     return [_model(AgencyLead, d) for d in docs]
+
+
+# --------------------------------------------------------------------------
+# locality context
+# --------------------------------------------------------------------------
+
+
+def _locality_key(locality: str, city: str | None) -> str:
+    return f"{(locality or '').strip().lower()}|{(city or '').strip().lower()}"
+
+
+async def get_cached_locality(
+    locality: str, city: str | None, max_age_days: int = 30
+) -> dict[str, Any] | None:
+    """A previously summarised locality, if it is still fresh.
+
+    Cached across sessions and users on purpose: a hundred people searching
+    Kondapur should cost one Reddit fetch and one model call, not a hundred.
+    What residents say about an area changes over months, not hours, so a long
+    expiry is honest rather than lazy.
+    """
+    doc = await get_db()[LOCALITY_CACHE].find_one({"_id": _locality_key(locality, city)})
+    if not doc:
+        return None
+    cached_at = as_utc(doc.get("cached_at"))
+    if cached_at and (utcnow() - cached_at) > timedelta(days=max_age_days):
+        return None
+    return doc.get("context")
+
+
+async def save_cached_locality(locality: str, city: str | None, context: dict[str, Any]) -> None:
+    """Cache a locality summary. Failures here must not fail the request."""
+    await get_db()[LOCALITY_CACHE].update_one(
+        {"_id": _locality_key(locality, city)},
+        {"$set": {"context": context, "cached_at": utcnow(), "locality": locality, "city": city}},
+        upsert=True,
+    )

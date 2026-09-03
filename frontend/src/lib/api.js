@@ -210,3 +210,25 @@ export const submitAgencyLead = ({ email, notes, source = 'pricing_page' }) =>
     method: 'POST',
     body: { email, notes: notes || null, source },
   });
+
+/* ------------------------------------------------------------------ chat */
+
+/**
+ * POST /api/chat/ask — a question about one listing, answered from its call.
+ *
+ * The reply carries `covered`: false means the call genuinely did not establish
+ * it, which the UI shows differently from a real answer. `quote` is the
+ * broker's own words, verified against the transcript server-side before it is
+ * ever returned.
+ */
+export const askAboutListing = ({ sessionId, listingId, question }) =>
+  request('/api/chat/ask', {
+    method: 'POST',
+    body: { session_id: sessionId, listing_id: listingId, user_question: question },
+  });
+
+/* -------------------------------------------------------------- locality */
+
+/** GET /api/session/{id}/locality — unverified neighbourhood context. */
+export const getLocalityContext = (sessionId, { refresh = false } = {}) =>
+  request(`/api/session/${sessionId}/locality${refresh ? '?refresh=true' : ''}`);

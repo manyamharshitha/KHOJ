@@ -11,7 +11,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -19,7 +19,7 @@ from app.config import settings
 from app.core.db import DatabaseNotReady, connect, disconnect, get_db
 from app.core.indexes import ensure_indexes
 from app.routes import auth as auth_routes
-from app.routes import leads, search
+from app.routes import chat, leads, search
 from app.telephony.persona import assert_compliance
 
 logging.basicConfig(
@@ -83,6 +83,7 @@ app.add_middleware(
 app.include_router(auth_routes.router)
 app.include_router(search.router)
 app.include_router(leads.router)
+app.include_router(chat.router)
 
 
 @app.get("/", tags=["meta"])
@@ -99,6 +100,28 @@ async def root() -> dict[str, object]:
         "docs": "/docs",
         "health": "/api/health",
     }
+
+
+@app.get("/health", tags=["meta"])
+async def health_root() -> JSONResponse:
+    """Deployment health, including whether the database actually answers.
+
+    Separate from ``/api/health`` and deliberately blunt: it returns 503 when
+    the database is unreachable, so a platform health check fails the deploy
+    instead of routing traffic to an instance that will 500 on every write.
+    That is the failure mode that made the lead form look like a network error.
+    """
+    from app.core.db import ping
+
+    connected = await ping()
+    body = {
+        "status": "ok" if connected else "degraded",
+        "database": settings.database_name,
+        "database_connected": connected,
+    }
+    return JSONResponse(
+        body, status_code=200 if connected else status.HTTP_503_SERVICE_UNAVAILABLE
+    )
 
 
 @app.get("/api/health", tags=["meta"])

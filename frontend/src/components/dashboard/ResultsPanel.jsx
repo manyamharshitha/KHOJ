@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+
+import { askAboutListing } from '../../lib/api';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Badge, TextInput } from './dashboardUI';
 import { STATUS_META } from '../../data/callRuns';
@@ -191,23 +193,28 @@ const Bubble = styled.div`
   align-self: ${({ $me }) => ($me ? 'flex-end' : 'flex-start')};
   max-width: 80%;
   background: ${({ theme, $me }) => ($me ? theme.ink : theme.surface2)};
-  color: ${({ theme, $me }) => ($me ? theme.bg : theme.ink)};
+  /* A reply the call could not support is deliberately quieter than one it
+     could. The difference between "the broker said 30,000" and "the call
+     didn't cover that" should be visible before either is read. */
+  color: ${({ theme, $me, $muted }) => ($me ? theme.bg : $muted ? theme.muted : theme.ink)};
   font-size: 0.84rem;
   line-height: 1.5;
   padding: 0.55rem 0.85rem;
   border-radius: 12px;
 `;
 
-const canned = (q) => {
-  const text = q.toLowerCase();
-  if (text.includes('flood') || text.includes('water')) {
-    return "The broker didn't mention drainage — I've flagged it for the next call if you want it confirmed.";
-  }
-  if (text.includes('fake') || text.includes('genuine') || text.includes('real')) {
-    return 'Based on the call and listing details so far, nothing here raised a red flag — but always worth a site visit before you commit.';
-  }
-  return "Good question — that wasn't covered on the call. I can include it if this listing gets a follow-up.";
-};
+/** The broker's own words. Verified against the transcript server-side. */
+const Quote = styled.span`
+  display: block;
+  margin-top: 0.35rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid ${({ theme }) => theme.line};
+  color: ${({ theme }) => theme.muted};
+  font-style: italic;
+  font-size: 0.8rem;
+`;
+
+
 
 const SourceNote = styled.p`
   font-size: 0.8rem;
@@ -234,6 +241,7 @@ const ResultsPanel = ({ sessionId = null }) => {
   const [openId, setOpenId] = useState(null);
   const [threads, setThreads] = useState({});
   const [drafts, setDrafts] = useState({});
+  const [pending, setPending] = useState({});
 
   // Live results when a session is open and the backend is reachable; the
   // bundled sample set otherwise, labelled as such rather than passed off.
@@ -250,15 +258,46 @@ const ResultsPanel = ({ sessionId = null }) => {
     .slice()
     .sort((a, b) => b.matchScore - a.matchScore);
 
-  const ask = (runId, e) => {
+  const append = (runId, message) =>
+    setThreads((prev) => ({ ...prev, [runId]: [...(prev[runId] || []), message] }));
+
+  /**
+   * Ask about one listing. The answer comes from that listing's call
+   * transcript, read server-side by the model — nothing here is generated in
+   * the browser, and an answer the call did not support is not returned at all.
+   */
+  const ask = async (runId, e) => {
     e.preventDefault();
     const text = (drafts[runId] || '').trim();
-    if (!text) return;
-    setThreads((prev) => ({ ...prev, [runId]: [...(prev[runId] || []), { me: true, text }] }));
+    if (!text || pending[runId]) return;
+
+    append(runId, { me: true, text });
     setDrafts((prev) => ({ ...prev, [runId]: '' }));
-    window.setTimeout(() => {
-      setThreads((prev) => ({ ...prev, [runId]: [...(prev[runId] || []), { me: false, text: canned(text) }] }));
-    }, 700);
+
+    // Without a live session there is no transcript to read, so say that
+    // rather than sending a request that can only fail.
+    if (!sessionId || !isLive) {
+      append(runId, {
+        me: false,
+        text: 'This is sample data, so there is no real call for me to read. Run a search to ask about a listing you actually called.',
+        muted: true,
+      });
+      return;
+    }
+
+    setPending((prev) => ({ ...prev, [runId]: true }));
+    try {
+      const res = await askAboutListing({ sessionId, listingId: runId, question: text });
+      append(runId, { me: false, text: res.answer, muted: !res.covered, quote: res.quote });
+    } catch (err) {
+      append(runId, {
+        me: false,
+        text: err?.message || 'I could not check the call just now. Please try again.',
+        muted: true,
+      });
+    } finally {
+      setPending((prev) => ({ ...prev, [runId]: false }));
+    }
   };
 
   return (
@@ -372,23 +411,30 @@ const ResultsPanel = ({ sessionId = null }) => {
                   )}
 
                   <SectionLabel>Ask Khoj about this listing</SectionLabel>
-                  {(threads[run.id] || []).length > 0 && (
+                  {((threads[run.id] || []).length > 0 || pending[run.id]) && (
                     <Thread>
                       {threads[run.id].map((m, i) => (
-                        <Bubble key={i} $me={m.me}>
+                        <Bubble key={i} $me={m.me} $muted={m.muted}>
                           {m.text}
+                          {m.quote && <Quote>“{m.quote}”</Quote>}
                         </Bubble>
                       ))}
+                      {pending[run.id] && (
+                        <Bubble $me={false} $muted>
+                          Reading the call…
+                        </Bubble>
+                      )}
                     </Thread>
                   )}
                   <AskRow onSubmit={(e) => ask(run.id, e)}>
                     <TextInput
-                      placeholder="e.g. Does this area flood in monsoon?"
+                      placeholder="e.g. What is the actual rent?"
                       value={drafts[run.id] || ''}
+                      disabled={pending[run.id]}
                       onChange={(e) => setDrafts((prev) => ({ ...prev, [run.id]: e.target.value }))}
                     />
-                    <Button type="submit" size="sm" variant="ghost" arrow={false}>
-                      Ask
+                    <Button type="submit" size="sm" variant="ghost" arrow={false} disabled={pending[run.id]}>
+                      {pending[run.id] ? 'Asking…' : 'Ask'}
                     </Button>
                   </AskRow>
                 </BodyInner>

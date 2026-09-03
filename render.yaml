@@ -92,3 +92,7 @@ services:
         value: "7"
       - key: IGNORE_CALL_WINDOW
         value: "false"
+      # Never true in production: it disables the per-number cooldown that stops
+      # one broker being rung repeatedly.
+      - key: BYPASS_CALL_WINDOW
+        value: "false"

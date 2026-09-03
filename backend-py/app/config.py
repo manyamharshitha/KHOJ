@@ -38,6 +38,19 @@ class Settings(BaseSettings):
     #: Comma-separated browser origins allowed to call this API with cookies.
     frontend_origins: str = "http://localhost:5173"
 
+    # --- locality context (Reddit) ---------------------------------------
+    #: Reddit credentials. Register a "script" app at
+    #: https://www.reddit.com/prefs/apps to get these.
+    #:
+    #: Required, not optional: appending ".json" to a search URL now returns
+    #: HTTP 403 and an HTML page. Unauthenticated reads were closed off, so the
+    #: OAuth client-credentials flow is the only route that still works.
+    #: Without them, locality context degrades to "not configured" and the rest
+    #: of the product is unaffected.
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_user_agent: str = "khoj-locality-context/1.0 (rental verification research)"
+
     # --- database (Firestore Enterprise, MongoDB wire protocol) ----------
     #: Connection string from the Firestore Enterprise database page in the
     #: Google Cloud console. Enterprise edition speaks MongoDB, not the native
