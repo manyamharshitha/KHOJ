@@ -159,8 +159,16 @@ class Settings(BaseSettings):
 
     @property
     def origins(self) -> list[str]:
-        """CORS origins as a list."""
-        return [o.strip() for o in self.frontend_origins.split(",") if o.strip()]
+        """CORS origins as a list, normalised.
+
+        Trailing slashes are stripped because a browser never sends one. The
+        Origin header is scheme + host + port and nothing else, so a configured
+        value of ``https://example.com/`` matches no request that will ever
+        arrive — the preflight is refused and every call fails with a CORS error
+        that looks like the server is down. Normalising here means the setting
+        works whether or not somebody pasted the slash.
+        """
+        return [o.strip().rstrip("/") for o in self.frontend_origins.split(",") if o.strip()]
 
     @property
     def windows_ist(self) -> list[tuple[int, int]]:

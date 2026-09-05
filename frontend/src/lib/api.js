@@ -20,7 +20,7 @@ import { auth } from '../firebase';
  * every request goes to the user's own machine and fails silently-ish, so the
  * console warning below is worth the noise.
  */
-const BASE = (import.meta.env.VITE_API_URL ?? 'http://localhost:8080').replace(/\/$/, '');
+const BASE = (import.meta.env.VITE_API_URL ?? 'http://localhost:8010').replace(/\/$/, '');
 
 if (import.meta.env.PROD && !import.meta.env.VITE_API_URL) {
   console.warn(
