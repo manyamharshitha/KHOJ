@@ -17,9 +17,20 @@ services:
     branch: main
 
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    # Portal crawling needs a browser. Chromium plus its system libraries is
+    # roughly 400MB and regularly exhausts a small instance's build disk, so
+    # it is not installed by default: the crawler reports the failure per
+    # site and the pasted-content and add-by-hand paths keep working without
+    # it. To enable crawling in production, use this build command instead:
+    #
+    #   pip install --upgrade pip && pip install -r requirements.txt && playwright install --with-deps chromium
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
-    healthCheckPath: /api/health
+    # /health returns 503 when the database is unreachable, so a deploy that
+    # cannot reach storage is marked unhealthy instead of quietly going live
+    # and returning 500 on every write. /api/health always answers 200 and is
+    # for humans, not for the platform.
+    healthCheckPath: /health
 
     envVars:
       - key: PYTHON_VERSION

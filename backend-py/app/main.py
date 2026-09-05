@@ -37,20 +37,34 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # The Motor client binds to the running event loop when it is constructed,
     # so it has to be built here rather than at import time — a client attached
     # to the wrong loop does not error, it simply hangs on every query.
+    # A database that cannot be reached must not stop the process from starting.
+    #
+    # Raising here aborts uvicorn's startup, so it never binds $PORT — and a
+    # platform that cannot open a socket reports "deploy failed" with no way to
+    # curl the app and find out why. Starting degraded keeps the port bound and
+    # the logs reachable; /health then answers 503, so the platform still knows
+    # the instance is not fit to serve and a bad deploy does not go live.
+    database_ready = False
     try:
         await connect()
+        database_ready = True
     except DatabaseNotReady as exc:
-        # Logged before the raise on purpose. Uvicorn wraps a lifespan failure in
-        # forty frames of starlette and contextlib plumbing, and on a narrow
-        # terminal the one line that says what to do scrolls off the top.
-        log.error("startup failed: %s", exc)
-        raise
-    if settings.ensure_indexes_on_startup:
-        await ensure_indexes(get_db())
+        log.error("STARTUP DEGRADED - the database is unreachable: %s", exc)
+        log.error("The API is listening, but every request that touches storage will fail.")
+        log.error("Check FIRESTORE_ENTERPRISE_URI and DATABASE_NAME, then redeploy.")
+    except Exception:  # noqa: BLE001 - never let an unexpected error stop the bind
+        log.exception("STARTUP DEGRADED - the database could not be opened")
+
+    if database_ready and settings.ensure_indexes_on_startup:
+        try:
+            await ensure_indexes(get_db())
+        except Exception:  # noqa: BLE001 - an index is not worth failing a boot
+            log.exception("indexes: could not be created; continuing without them")
 
     log.info(
-        "khoj-py up · db=%s · telephony=%s · llm=%s · auth=%s",
+        "khoj-py up · db=%s(%s) · telephony=%s · llm=%s · auth=%s",
         settings.database_name,
+        "connected" if database_ready else "UNREACHABLE",
         settings.telephony_provider,
         settings.llm_provider,
         "required" if settings.auth_required else "open",
