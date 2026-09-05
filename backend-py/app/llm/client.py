@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -294,3 +295,41 @@ async def complete_model(
     except ValidationError as exc:
         log.warning("llm: response failed %s validation: %s", output.__name__, exc)
         raise LLMError(f"response did not match {output.__name__}") from exc
+
+
+async def stream_text(
+    *,
+    system: str,
+    user: str,
+    model: str | None = None,
+    temperature: float = 0.0,
+    max_tokens: int = 2048,
+) -> AsyncIterator[str]:
+    """Yield an answer in pieces as the model produces it.
+
+    Plain prose, not schema-constrained JSON. Streaming structured output means
+    the client receives half-formed JSON it cannot parse until the end, which
+    buys nothing — the point of streaming is that a person can start reading.
+
+    Gemini only. OpenAI streams too, but nothing calls this on that path yet and
+    an untested branch is worse than an honest refusal.
+    """
+    if settings.llm_provider != "gemini":
+        raise LLMUnavailable("streaming is implemented for Gemini only")
+
+    from google.genai import types
+
+    chosen = model or settings.extraction_model
+    stream = await _gemini().aio.models.generate_content_stream(
+        model=chosen,
+        contents=user,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        ),
+    )
+    async for chunk in stream:
+        text = getattr(chunk, "text", None)
+        if text:
+            yield text

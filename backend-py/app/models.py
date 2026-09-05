@@ -12,7 +12,7 @@ may not exist, and nothing downstream is allowed to invent one.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum, StrEnum
 from typing import Annotated, Any
@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 def utcnow() -> datetime:
     """Timezone-aware UTC now. BSON drops tzinfo, so reads go through as_utc."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def as_utc(value: Any) -> Any:
@@ -38,7 +38,7 @@ def as_utc(value: Any) -> Any:
     out of the database goes through here. Non-datetimes pass through untouched.
     """
     if isinstance(value, datetime) and value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     return value
 
 
@@ -465,6 +465,15 @@ class UserProfile(Base):
     tier: str = "free"
     listings_limit: int = Field(default=2, ge=0, le=1000)
     listings_used: int = Field(default=0, ge=0)
+
+    #: Optional saved preferences the search form can pre-fill. Free-form on
+    #: purpose — a bag of hints, not a second copy of SearchCriteria to keep in
+    #: sync. Capped so a client cannot use the profile as unbounded storage.
+    preferred_localities: list[str] = Field(default_factory=list, max_length=20)
+    #: Listing sites the customer added herself, kept per account so they
+    #: survive a reload on any device rather than living in one browser.
+    custom_sources: list[str] = Field(default_factory=list, max_length=20)
+    default_tenant_profile: str | None = None
 
     created_at: datetime = Field(default_factory=utcnow)
 

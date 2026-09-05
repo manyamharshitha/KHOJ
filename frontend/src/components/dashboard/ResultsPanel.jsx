@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { askAboutListing } from '../../lib/api';
+import { streamAboutListing } from '../../lib/api';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Badge, TextInput } from './dashboardUI';
 import { STATUS_META } from '../../data/callRuns';
@@ -274,21 +274,51 @@ const ResultsPanel = ({ sessionId = null }) => {
     append(runId, { me: true, text });
     setDrafts((prev) => ({ ...prev, [runId]: '' }));
 
-    // Without a live session there is no transcript to read, so say that
-    // rather than sending a request that can only fail.
-    if (!sessionId || !isLive) {
-      append(runId, {
-        me: false,
-        text: 'This is sample data, so there is no real call for me to read. Run a search to ask about a listing you actually called.',
-        muted: true,
-      });
-      return;
-    }
-
     setPending((prev) => ({ ...prev, [runId]: true }));
     try {
-      const res = await askAboutListing({ sessionId, listingId: runId, question: text });
-      append(runId, { me: false, text: res.answer, muted: !res.covered, quote: res.quote });
+      // A sample card's id is not in the database, so its own content travels
+      // with the question and the server answers from that. Live cards send
+      // ids only and are answered from the real call transcript.
+      const card = runs.find((r) => r.id === runId);
+      const inline =
+        !sessionId || !isLive
+          ? {
+              listing: {
+                title: card?.address ?? null,
+                locality: card?.address?.split('·').pop()?.trim() ?? null,
+              },
+              qna: (card?.answers ?? []).map((a) => ({ question: a.q, answer: a.a ?? null })),
+            }
+          : {};
+
+      // Show an empty reply immediately and fill it in as the text arrives.
+      const index = (threads[runId] || []).length + 1;
+      append(runId, { me: false, text: '', muted: false });
+
+      const patch = (fields) =>
+        setThreads((prev) => {
+          const thread = [...(prev[runId] || [])];
+          if (!thread[index]) return prev;
+          thread[index] = { ...thread[index], ...fields };
+          return { ...prev, [runId]: thread };
+        });
+
+      let streamed = '';
+      const res = await streamAboutListing(
+        { sessionId, listingId: runId, question: text, ...inline },
+        (delta) => {
+          streamed += delta;
+          patch({ text: streamed });
+        },
+      );
+
+      // The quote check lands after the text. An answer that cited words the
+      // broker never said is replaced rather than left on screen.
+      if (res?.verified === false) {
+        patch({ text: "The call didn't cover that.", muted: true });
+      } else {
+        patch({ text: res?.text || streamed, muted: res?.covered === false });
+      }
     } catch (err) {
       append(runId, {
         me: false,

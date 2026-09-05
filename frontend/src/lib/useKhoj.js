@@ -217,3 +217,150 @@ export function useAgencyLead() {
 
   return { ...state, submit };
 }
+
+
+/* --------------------------------------------------------------- profile */
+
+/**
+ * The signed-in user's profile, synced with the backend.
+ *
+ * On sign-in it fetches the stored profile. First-time users have none, so the
+ * Firebase display name and email are pushed up once to create it — which is
+ * also what captures a Google name into our own store. `needsName` is true when
+ * neither the token nor the stored profile has a usable name, so the UI can
+ * prompt for one rather than showing "there".
+ */
+export function useProfile() {
+  const { user, ready } = useAuthUser();
+  const [profile, setProfile] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!ready || !API_CONFIGURED || !user) return;
+    let active = true;
+
+    (async () => {
+      const fallbackName = user.displayName || '';
+      try {
+        let stored = null;
+        try {
+          stored = await api.getUserProfile(user.uid);
+        } catch (err) {
+          if (err?.status !== 404) throw err;
+        }
+
+        // No profile yet, or the token carries a name the store is missing:
+        // write once so a Google sign-in is captured without a form.
+        if (!stored || (!stored.name && fallbackName)) {
+          stored = await api.saveUserProfile({
+            userId: user.uid,
+            name: fallbackName || undefined,
+            email: user.email || undefined,
+          });
+        }
+        if (active) setProfile(stored);
+      } catch {
+        // Never block the dashboard on a profile round-trip — fall back to the
+        // token's own fields.
+        if (active) {
+          setProfile({ user_id: user.uid, name: fallbackName, email: user.email });
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [ready, user]);
+
+  const saveName = useCallback(
+    async (name) => {
+      if (!user || !name?.trim()) return;
+      setSaving(true);
+      try {
+        const updated = await api.saveUserProfile({ userId: user.uid, name: name.trim() });
+        setProfile(updated);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [user],
+  );
+
+  /**
+   * Persist the customer's own listing sites against her account.
+   *
+   * The whole list is sent, not a delta — the endpoint replaces the field, so
+   * an add and a remove are the same call and cannot drift out of sync.
+   */
+  const saveCustomSources = useCallback(
+    async (urls) => {
+      if (!user) return null;
+      setSaving(true);
+      try {
+        const updated = await api.saveUserProfile({ userId: user.uid, customSources: urls });
+        setProfile(updated);
+        return updated;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [user],
+  );
+
+  const displayName = profile?.name || user?.displayName || '';
+  const needsName = Boolean(ready && user && !displayName);
+
+  return {
+    profile,
+    displayName,
+    needsName,
+    saveName,
+    saveCustomSources,
+    customSources: profile?.custom_sources ?? null,
+    saving,
+    user,
+    ready,
+  };
+}
+
+
+/* ------------------------------------------------------------- dashboard */
+
+/**
+ * The overview panel's stats and recent activity.
+ *
+ * `data` stays null until the request settles, which is what lets the panel
+ * tell "still loading" apart from "this account has genuinely done nothing" —
+ * showing an empty state during the first fetch would flash a "get started"
+ * prompt at someone who has run fifty searches.
+ */
+export function useDashboard() {
+  const { ready } = useAuthUser();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    if (!API_CONFIGURED) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      setData(await api.getDashboard());
+      setError(null);
+    } catch (err) {
+      setError(err);
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (ready) void load();
+  }, [ready, load]);
+
+  return { data, loading, error, reload: load };
+}

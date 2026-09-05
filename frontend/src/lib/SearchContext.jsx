@@ -59,6 +59,16 @@ export function SearchProvider({ children }) {
     [search],
   );
 
+  /**
+   * Take over a session created somewhere other than the search box — a
+   * listing added by hand, for instance — so Results shows it immediately.
+   */
+  const adoptSession = useCallback((id) => {
+    if (!id) return;
+    setSessionId(id);
+    writeStored(id);
+  }, []);
+
   const clearSearch = useCallback(() => {
     setSessionId(null);
     writeStored(null);
@@ -68,6 +78,7 @@ export function SearchProvider({ children }) {
     () => ({
       sessionId,
       startSearch,
+      adoptSession,
       clearSearch,
       callAll: search.callAll,
       status: search.status,
@@ -76,7 +87,7 @@ export function SearchProvider({ children }) {
       isConfigured: search.isConfigured,
       isBusy: ['starting', 'running', 'scraping', 'extracting', 'calling'].includes(search.status),
     }),
-    [sessionId, startSearch, clearSearch, search],
+    [sessionId, startSearch, adoptSession, clearSearch, search],
   );
 
   return <SearchContext.Provider value={value}>{children}</SearchContext.Provider>;
@@ -93,6 +104,7 @@ export function useSearchSession() {
     useContext(SearchContext) ?? {
       sessionId: null,
       startSearch: async () => null,
+      adoptSession: () => {},
       clearSearch: () => {},
       callAll: async () => null,
       status: 'idle',

@@ -2,7 +2,13 @@ import { useState } from 'react';
 import styled from 'styled-components';
 import Button from '../ui/Button';
 import { TextInput } from './dashboardUI';
-import { COMMON_QUESTIONS, BUY_QUESTIONS, RENT_QUESTIONS, MAX_SECONDARY_PICKS } from '../../data/onboardingQuestions';
+import {
+  COMMON_QUESTIONS,
+  BUY_QUESTIONS,
+  RENT_QUESTIONS,
+  MAX_SECONDARY_PICKS,
+  LOCALITIES,
+} from '../../data/onboardingQuestions';
 
 const Overlay = styled.div`
   position: fixed;
@@ -146,6 +152,31 @@ const OptionPill = styled.button`
   transition: 0.15s ease;
 `;
 
+const SuggestList = styled.ul`
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0.25rem;
+  border: 1px solid ${({ theme }) => theme.line};
+  border-radius: 10px;
+  background: ${({ theme }) => theme.surface};
+  max-height: 200px;
+  overflow-y: auto;
+  text-align: left;
+`;
+
+const SuggestItem = styled.li`
+  padding: 0.5rem 0.7rem;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: ${({ theme }) => theme.ink};
+
+  &:hover,
+  &[data-active='true'] {
+    background: ${({ theme }) => theme.surface2};
+  }
+`;
+
 const CustomForm = styled.form`
   display: flex;
   gap: 0.5rem;
@@ -208,11 +239,19 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
   const [qIndex, setQIndex] = useState(0);
   const [answers, setAnswers] = useState({});
   const [draft, setDraft] = useState('');
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
   const [secondaryPicked, setSecondaryPicked] = useState([]);
   const [secondaryCustom, setSecondaryCustom] = useState([]);
   const [secondaryDraft, setSecondaryDraft] = useState('');
 
   const currentQ = COMMON_QUESTIONS[qIndex];
+
+  // Only the locality step autocompletes. Matches anywhere in the name, so
+  // "nagar" finds Anna Nagar and Kalyan Nagar, not just names starting with it.
+  const suggestions =
+    currentQ?.id === 'locality' && draft.trim()
+      ? LOCALITIES.filter((x) => x.toLowerCase().includes(draft.trim().toLowerCase())).slice(0, 6)
+      : [];
   const dealType = answers.dealType;
   const secondaryBank = dealType === 'Buy' ? BUY_QUESTIONS : RENT_QUESTIONS;
   const secondaryTotal = secondaryPicked.length + secondaryCustom.length;
@@ -247,10 +286,34 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
 
   const submitCustomAnswer = (e) => {
     e.preventDefault();
-    const text = draft.trim();
+    // Enter with a suggestion highlighted takes the suggestion, not the
+    // half-typed text underneath it.
+    const text = (activeSuggestion >= 0 ? suggestions[activeSuggestion] : draft).trim();
     if (!text) return;
+    setActiveSuggestion(-1);
     answerCurrent(text);
     goNextQuestion();
+  };
+
+  const chooseSuggestion = (value) => {
+    setActiveSuggestion(-1);
+    answerCurrent(value);
+    goNextQuestion();
+  };
+
+  /** Arrow keys move the highlight; Escape dismisses the list. */
+  const onSuggestKeyDown = (e) => {
+    if (!suggestions.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveSuggestion((i) => (i + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveSuggestion((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
+    } else if (e.key === 'Escape') {
+      setActiveSuggestion(-1);
+      setDraft('');
+    }
   };
 
   const toggleSecondary = (id) => {
@@ -353,14 +416,44 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
 
                 <CustomForm onSubmit={submitCustomAnswer}>
                   <TextInput
-                    placeholder={currentQ.options.length > 0 ? 'Or write your own answer' : 'Type your answer'}
+                    placeholder={
+                      currentQ.id === 'locality'
+                        ? 'Start typing an area…'
+                        : currentQ.options.length > 0
+                          ? 'Or write your own answer'
+                          : 'Type your answer'
+                    }
                     value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    autoComplete="off"
+                    onChange={(e) => {
+                      setDraft(e.target.value);
+                      setActiveSuggestion(-1);
+                    }}
+                    onKeyDown={onSuggestKeyDown}
                   />
                   <Button type="submit" size="sm" arrow={false}>
                     Next
                   </Button>
                 </CustomForm>
+                {suggestions.length > 0 && (
+                  <SuggestList>
+                    {suggestions.map((name, i) => (
+                      <SuggestItem
+                        key={name}
+                        data-active={i === activeSuggestion}
+                        onMouseEnter={() => setActiveSuggestion(i)}
+                        // onMouseDown, not onClick: the input blurring first
+                        // would unmount the list before the click landed.
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          chooseSuggestion(name);
+                        }}
+                      >
+                        {name}
+                      </SuggestItem>
+                    ))}
+                  </SuggestList>
+                )}
               </QCard>
               <Actions>
                 <SkipLink type="button" onClick={goPrevQuestion}>

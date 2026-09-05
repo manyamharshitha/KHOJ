@@ -1,6 +1,7 @@
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, StatGrid, StatCard, StatLabel, StatNum, Badge } from './dashboardUI';
-import { callRuns, STATUS_META } from '../../data/callRuns';
+import { STATUS_META } from '../../data/callRuns';
+import { useDashboard, useProfile } from '../../lib/useKhoj';
 import Button from '../ui/Button';
 
 const ActionsRow = styled.div`
@@ -62,8 +63,43 @@ const RunMeta = styled.div`
   }
 `;
 
+const EmptyState = styled.div`
+  text-align: center;
+  padding: 2.6rem 1.4rem;
+
+  p {
+    color: ${({ theme }) => theme.muted};
+    font-size: 0.9rem;
+    margin: 0 0 1.4rem;
+    line-height: 1.6;
+  }
+`;
+
+/** Backend call_status onto the badge keys STATUS_META already knows. */
+const STATUS_KEY = {
+  completed: 'completed',
+  queued: 'scheduled',
+  dialing: 'calling',
+  in_progress: 'calling',
+  no_answer: 'no-answer',
+  busy: 'no-answer',
+  failed: 'no-answer',
+  cancelled: 'no-answer',
+  blocked: 'no-answer',
+};
+
 const Overview = ({ onNavigate, profile }) => {
-  const firstName = (profile?.name || 'there').trim().split(/\s+/)[0];
+  // The signed-in name from the Google session, not profile.name — that falls
+  // back to 'Guest' for the navbar, and "Welcome back, Guest" reads worse.
+  const { displayName } = useProfile();
+  const firstName = (displayName || profile?.name || '').trim().split(/\s+/)[0] || 'there';
+
+  const { data, loading, error } = useDashboard();
+  const stats = data?.stats;
+  const activity = data?.activity ?? [];
+  // `is_empty` from the server, not `activity.length` — a search that returned
+  // nothing is still a search, and should not be told to get started.
+  const isEmpty = data ? data.is_empty : false;
 
   return (
     <div>
@@ -73,22 +109,70 @@ const Overview = ({ onNavigate, profile }) => {
         <Sub>Here's what Khoj has been doing on your behalf.</Sub>
       </PanelHead>
 
+      {loading && (
+        <Card>
+          <EmptyState>
+            <p>Loading your dashboard…</p>
+          </EmptyState>
+        </Card>
+      )}
+
+      {/* An unreachable backend used to fall through to the stats block, which
+          then rendered a full grid of em dashes and an empty activity card —
+          indistinguishable from a real but idle account. Say what happened. */}
+      {!loading && error && (
+        <Card>
+          <EmptyState>
+            <SectionTitle>Couldn't load your dashboard</SectionTitle>
+            <p>{error.message || 'The server did not respond.'}</p>
+          </EmptyState>
+        </Card>
+      )}
+
+      {!loading && !error && isEmpty && (
+        <Card>
+          <EmptyState>
+            <SectionTitle>No activity yet</SectionTitle>
+            <p>Add a listing to get started.</p>
+            <ActionsRow style={{ justifyContent: 'center', margin: 0 }}>
+              <Button size="sm" arrow={false} onClick={() => onNavigate('sources')}>
+                Add your first listing
+              </Button>
+              <Button size="sm" variant="ghost" arrow={false} onClick={() => onNavigate('questions')}>
+                Set your questions
+              </Button>
+            </ActionsRow>
+          </EmptyState>
+        </Card>
+      )}
+
+      {!loading && !error && !isEmpty && (
+        <>
+
       <StatGrid>
         <StatCard>
           <StatLabel>Listings matched</StatLabel>
-          <StatNum>7</StatNum>
+          <StatNum>{stats ? stats.listings_matched : '—'}</StatNum>
         </StatCard>
         <StatCard>
           <StatLabel>Calls completed</StatLabel>
-          <StatNum>5</StatNum>
+          <StatNum>{stats ? stats.calls_completed : '—'}</StatNum>
         </StatCard>
         <StatCard>
           <StatLabel>Avg. questions hit</StatLabel>
-          <StatNum>12/15</StatNum>
+          {/* An em dash until a call has completed: "0/0" looks like a failure
+              rather than an absence. */}
+          <StatNum>
+            {stats && stats.avg_questions_total > 0
+              ? `${stats.avg_questions_hit}/${stats.avg_questions_total}`
+              : '—'}
+          </StatNum>
         </StatCard>
         <StatCard>
           <StatLabel>Current plan</StatLabel>
-          <StatNum style={{ fontSize: '1.4rem' }}>Silver</StatNum>
+          <StatNum style={{ fontSize: '1.4rem', textTransform: 'capitalize' }}>
+            {stats ? stats.tier : '—'}
+          </StatNum>
         </StatCard>
       </StatGrid>
 
@@ -103,8 +187,8 @@ const Overview = ({ onNavigate, profile }) => {
 
       <SectionTitle>Recent activity</SectionTitle>
       <Card>
-        {callRuns.slice(0, 4).map((run) => {
-          const meta = STATUS_META[run.status];
+        {activity.slice(0, 4).map((run) => {
+          const meta = STATUS_META[STATUS_KEY[run.status] ?? 'scheduled'];
           return (
             <RunRow key={run.id}>
               <RunInfo>
@@ -113,7 +197,7 @@ const Overview = ({ onNavigate, profile }) => {
               </RunInfo>
               <RunMeta>
                 <span className="score">
-                  {run.matchScore}/{run.totalQuestions}
+                  {run.match_score}/{run.total_questions}
                 </span>
                 <Badge $tone={meta.tone}>{meta.label}</Badge>
               </RunMeta>
@@ -121,6 +205,8 @@ const Overview = ({ onNavigate, profile }) => {
           );
         })}
       </Card>
+        </>
+      )}
     </div>
   );
 };

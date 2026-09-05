@@ -19,7 +19,7 @@ from app.config import settings
 from app.core.db import DatabaseNotReady, connect, disconnect, get_db
 from app.core.indexes import ensure_indexes
 from app.routes import auth as auth_routes
-from app.routes import chat, leads, search
+from app.routes import chat, leads, listings, search, users
 from app.telephony.persona import assert_compliance
 
 logging.basicConfig(
@@ -84,6 +84,8 @@ app.include_router(auth_routes.router)
 app.include_router(search.router)
 app.include_router(leads.router)
 app.include_router(chat.router)
+app.include_router(listings.router)
+app.include_router(users.router)
 
 
 @app.get("/", tags=["meta"])
@@ -111,14 +113,16 @@ async def health_root() -> JSONResponse:
     instead of routing traffic to an instance that will 500 on every write.
     That is the failure mode that made the lead form look like a network error.
     """
-    from app.core.db import ping
+    from app.core.db import ping_diagnostic
 
-    connected = await ping()
+    connected, error = await ping_diagnostic()
     body = {
         "status": "ok" if connected else "degraded",
         "database": settings.database_name,
         "database_connected": connected,
     }
+    if error:
+        body["error"] = error
     return JSONResponse(
         body, status_code=200 if connected else status.HTTP_503_SERVICE_UNAVAILABLE
     )

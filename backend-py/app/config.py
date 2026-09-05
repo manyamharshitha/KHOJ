@@ -63,8 +63,12 @@ class Settings(BaseSettings):
     #: service and the floor is kept above zero to avoid reconnect churn.
     mongo_max_pool_size: int = 50
     mongo_min_pool_size: int = 2
-    mongo_server_selection_timeout_ms: int = 8_000
-    mongo_connect_timeout_ms: int = 10_000
+    #: Fast-fail rather than the driver's 30s default. A cluster that is
+    #: unreachable should surface in a health check in a few seconds, not hang a
+    #: request until a proxy gives up first.
+    mongo_server_selection_timeout_ms: int = 3_000
+    mongo_connect_timeout_ms: int = 3_000
+    mongo_socket_timeout_ms: int = 3_000
 
     #: Create indexes on startup. Turn off where the deploy user is not allowed
     #: to issue DDL and an administrator manages indexes out of band.

@@ -211,7 +211,77 @@ export const submitAgencyLead = ({ email, notes, source = 'pricing_page' }) =>
     body: { email, notes: notes || null, source },
   });
 
+/* -------------------------------------------------------------- listings */
+
+/**
+ * POST /api/listings/manual — add a listing by typing it in.
+ *
+ * The path that works when a portal hides its numbers or the page reader
+ * cannot run. Returns a session and listing that are immediately dialable.
+ */
+export const addManualListing = (fields) =>
+  request('/api/listings/manual', { method: 'POST', body: fields });
+
 /* ------------------------------------------------------------------ chat */
+
+/**
+ * POST /api/chat/ask, streamed.
+ *
+ * Calls `onDelta` with each piece of text as it arrives and resolves with the
+ * final event. `verified: false` on that event means the answer cited words the
+ * broker never said and whatever was streamed must be replaced — the quote
+ * check can only run once the sentence exists, so it lands after the text.
+ */
+export async function streamAboutListing(
+  { sessionId, listingId, question, listing, qna },
+  onDelta,
+) {
+  const response = await fetch(`${BASE}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({
+      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(listingId ? { listing_id: listingId } : {}),
+      user_question: question,
+      ...(listing ? { listing } : {}),
+      ...(qna ? { qna } : {}),
+    }),
+  });
+
+  if (!response.ok || !response.body) {
+    throw new ApiError(`Request failed (${response.status})`, { status: response.status });
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let final = null;
+
+  // Server-sent events arrive split at arbitrary byte boundaries, so frames are
+  // reassembled here rather than assuming one chunk is one event.
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let cut;
+    while ((cut = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, cut).trim();
+      buffer = buffer.slice(cut + 2);
+      if (!frame.startsWith('data:')) continue;
+      let event;
+      try {
+        event = JSON.parse(frame.slice(5).trim());
+      } catch {
+        continue;
+      }
+      if (event.delta) onDelta?.(event.delta);
+      if (event.done) final = event;
+    }
+  }
+  return final ?? { done: true, verified: true };
+}
+
 
 /**
  * POST /api/chat/ask — a question about one listing, answered from its call.
@@ -221,10 +291,18 @@ export const submitAgencyLead = ({ email, notes, source = 'pricing_page' }) =>
  * broker's own words, verified against the transcript server-side before it is
  * ever returned.
  */
-export const askAboutListing = ({ sessionId, listingId, question }) =>
+export const askAboutListing = ({ sessionId, listingId, question, listing, qna }) =>
   request('/api/chat/ask', {
     method: 'POST',
-    body: { session_id: sessionId, listing_id: listingId, user_question: question },
+    body: {
+      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(listingId ? { listing_id: listingId } : {}),
+      user_question: question,
+      // Sent for the bundled sample cards, whose ids are not in the database.
+      // The server answers from these instead of refusing.
+      ...(listing ? { listing } : {}),
+      ...(qna ? { qna } : {}),
+    },
   });
 
 /* -------------------------------------------------------------- locality */
@@ -232,3 +310,38 @@ export const askAboutListing = ({ sessionId, listingId, question }) =>
 /** GET /api/session/{id}/locality — unverified neighbourhood context. */
 export const getLocalityContext = (sessionId, { refresh = false } = {}) =>
   request(`/api/session/${sessionId}/locality${refresh ? '?refresh=true' : ''}`);
+
+/* ------------------------------------------------------------------ users */
+
+/**
+ * POST /api/users/profile — create or update the signed-in user's profile.
+ *
+ * Sends only the fields provided, so a name-only save from a first-login prompt
+ * does not wipe saved localities. Tier and quota are never sent — the server
+ * owns those.
+ */
+export const saveUserProfile = ({
+  userId,
+  name,
+  email,
+  preferredLocalities,
+  defaultTenantProfile,
+  customSources,
+}) =>
+  request('/api/users/profile', {
+    method: 'POST',
+    body: {
+      user_id: userId,
+      ...(name != null ? { name } : {}),
+      ...(email != null ? { email } : {}),
+      ...(preferredLocalities != null ? { preferred_localities: preferredLocalities } : {}),
+      ...(defaultTenantProfile != null ? { default_tenant_profile: defaultTenantProfile } : {}),
+      ...(customSources !== undefined ? { custom_sources: customSources } : {}),
+    },
+  });
+
+/** GET /api/users/dashboard — stats and recent activity in one round trip. */
+export const getDashboard = () => request('/api/users/dashboard');
+
+/** GET /api/users/profile/{id} — the profile, plan tier and quota. */
+export const getUserProfile = (userId) => request(`/api/users/profile/${userId}`);

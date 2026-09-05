@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, CardRow, Badge, Switch, IconButton, TextInput } from './dashboardUI';
 import { defaultSources } from '../../data/listingSources';
 import { useSearchSession } from '../../lib/SearchContext';
+import { addManualListing } from '../../lib/api';
+import { useProfile } from '../../lib/useKhoj';
 import Button from '../ui/Button';
 
 const SourceInfo = styled.div`
@@ -27,6 +29,24 @@ const Right = styled.div`
   align-items: center;
   gap: 0.8rem;
   flex: none;
+`;
+
+const FieldGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+
+  @media (max-width: 520px) {
+    grid-template-columns: 1fr;
+  }
+`;
+
+const FormNote = styled.p`
+  font-size: 0.78rem;
+  color: ${({ theme, $error }) => ($error ? theme.danger ?? '#b3261e' : theme.muted)};
+  margin: 0.7rem 0 0;
+  line-height: 1.5;
 `;
 
 const AddRow = styled.form`
@@ -66,10 +86,71 @@ const SearchForm = styled.form`
 const SourcesPanel = ({ onNavigate }) => {
   const [sources, setSources] = useState(defaultSources);
   const [custom, setCustom] = useState([]);
+
+  // Custom sources live on the account, not in this component's state, so they
+  // survive a reload and follow the customer to another device. `customSources`
+  // is null until the profile has been fetched — distinct from an empty list,
+  // which means she has genuinely removed them all and must not be re-seeded.
+  const { customSources, saveCustomSources, user } = useProfile();
+  useEffect(() => {
+    if (!customSources) return;
+    setCustom(customSources.map((url, i) => ({ id: `custom-${i}-${url}`, url })));
+  }, [customSources]);
+
+  /** Write the whole list back, so add and remove share one code path. */
+  const persist = (next) => {
+    setCustom(next);
+    if (user) void saveCustomSources(next.map((c) => c.url)).catch(() => {});
+  };
   const [draft, setDraft] = useState('');
   const [prompt, setPrompt] = useState('');
+  const { startSearch, adoptSession, callAll, status, isBusy, error, isConfigured } =
+    useSearchSession();
 
-  const { startSearch, callAll, status, isBusy, error, isConfigured } = useSearchSession();
+  // Adding a listing by hand. The path that still works when a portal hides
+  // its phone numbers, or the page reader cannot start on the server.
+  const [manual, setManual] = useState({
+    contact_number: '',
+    title: '',
+    locality: '',
+    rent: '',
+    maintenance: '',
+    deposit: '',
+  });
+  const [manualState, setManualState] = useState({ status: 'idle', message: null });
+
+  const setField = (k) => (e) => setManual((prev) => ({ ...prev, [k]: e.target.value }));
+
+  const submitManual = async (e) => {
+    e.preventDefault();
+    if (!manual.contact_number.trim()) {
+      setManualState({ status: 'error', message: 'A phone number is needed — that is what gets called.' });
+      return;
+    }
+    setManualState({ status: 'saving', message: null });
+    try {
+      // Blank number fields are omitted rather than sent as 0. "Not stated" and
+      // "free" are different claims, and the call is what settles which.
+      const num = (v) => (String(v).trim() === '' ? undefined : Number(v));
+      const res = await addManualListing({
+        contact_number: manual.contact_number.trim(),
+        title: manual.title.trim() || undefined,
+        locality: manual.locality.trim() || undefined,
+        rent: num(manual.rent),
+        maintenance: num(manual.maintenance),
+        deposit: num(manual.deposit),
+      });
+      setManualState({
+        status: 'done',
+        message: `Added ${res.contact_number}. It is ready to call from Results.`,
+      });
+      setManual({ contact_number: '', title: '', locality: '', rent: '', maintenance: '', deposit: '' });
+      adoptSession?.(res.session_id);
+    } catch (err) {
+      setManualState({ status: 'error', message: err?.message || 'Could not add that listing.' });
+    }
+  };
+
 
   /**
    * Start a real search over the enabled sources.
@@ -103,11 +184,16 @@ const SourcesPanel = ({ onNavigate }) => {
     e.preventDefault();
     const url = draft.trim();
     if (!url) return;
-    setCustom((prev) => [...prev, { id: `custom-${Date.now()}`, url }]);
+    // Adding the same site twice would send it two identical calls.
+    if (custom.some((c) => c.url === url)) {
+      setDraft('');
+      return;
+    }
+    persist([...custom, { id: `custom-${Date.now()}`, url }]);
     setDraft('');
   };
 
-  const removeCustom = (id) => setCustom((prev) => prev.filter((s) => s.id !== id));
+  const removeCustom = (id) => persist(custom.filter((s) => s.id !== id));
 
   return (
     <div>
@@ -158,6 +244,45 @@ const SourcesPanel = ({ onNavigate }) => {
       </Card>
 
       <Note>Custom sources are checked the same way as our defaults — no extra setup on your end.</Note>
+
+      <PanelHead style={{ marginTop: '2.4rem' }}>
+        <Kicker>Add by hand</Kicker>
+        <Title>Have a number already?</Title>
+        <Sub>
+          Type in what you know and Khoj will call it. Nothing is read from a website, so this
+          works when a portal hides its numbers behind a login.
+        </Sub>
+      </PanelHead>
+
+      <Card>
+        <form onSubmit={submitManual}>
+          <TextInput
+            placeholder="Phone number — 10 digits, or +91…"
+            value={manual.contact_number}
+            onChange={setField('contact_number')}
+            aria-label="Phone number"
+          />
+          <FieldGrid>
+            <TextInput placeholder="What is it? e.g. 2BHK near the metro" value={manual.title} onChange={setField('title')} aria-label="Title" />
+            <TextInput placeholder="Locality" value={manual.locality} onChange={setField('locality')} aria-label="Locality" />
+            <TextInput placeholder="Rent (₹/month)" inputMode="numeric" value={manual.rent} onChange={setField('rent')} aria-label="Rent" />
+            <TextInput placeholder="Maintenance (₹/month)" inputMode="numeric" value={manual.maintenance} onChange={setField('maintenance')} aria-label="Maintenance" />
+            <TextInput placeholder="Deposit (₹)" inputMode="numeric" value={manual.deposit} onChange={setField('deposit')} aria-label="Deposit" />
+          </FieldGrid>
+          <AddRow as="div" style={{ marginTop: '1rem' }}>
+            <Button type="submit" size="sm" arrow={false} disabled={manualState.status === 'saving'}>
+              {manualState.status === 'saving' ? 'Adding…' : 'Add listing'}
+            </Button>
+          </AddRow>
+          {manualState.message && (
+            <FormNote $error={manualState.status === 'error'}>{manualState.message}</FormNote>
+          )}
+          <FormNote>
+            Only the phone number is required. Leave a figure blank if the advert never stated it —
+            the call is what settles it, and a blank is not the same claim as zero.
+          </FormNote>
+        </form>
+      </Card>
 
       <Card style={{ marginTop: '1.4rem' }}>
         <SearchForm onSubmit={runSearch}>

@@ -17,11 +17,12 @@ implement the MongoDB wire protocol and there is nothing local to point at.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from pymongo.errors import PyMongoError
+from pymongo.errors import PyMongoError, ServerSelectionTimeoutError
 
 from app.config import settings
 
@@ -50,8 +51,11 @@ def _client_kwargs() -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "maxPoolSize": settings.mongo_max_pool_size,
         "minPoolSize": settings.mongo_min_pool_size,
+        # Driven by config so the health probe, the driver and the docs cannot
+        # drift apart. Defaults are 3s — fast-fail, not the driver's 30s.
         "serverSelectionTimeoutMS": settings.mongo_server_selection_timeout_ms,
         "connectTimeoutMS": settings.mongo_connect_timeout_ms,
+        "socketTimeoutMS": settings.mongo_socket_timeout_ms,
         "appname": "khoj-api",
         # Round-trips UUIDs the same way every other modern driver does, rather
         # than the legacy Python-only representation.
@@ -153,10 +157,21 @@ def use_database(db: AsyncIOMotorDatabase | None) -> None:
 
 async def ping() -> bool:
     """Whether the database answers right now. Never raises."""
+    connected, _ = await ping_diagnostic()
+    return connected
+
+
+async def ping_diagnostic() -> tuple[bool, str | None]:
+    """Ping the database with a short bound and a safe diagnostic message."""
     if _db is None:
-        return False
+        return False, "DatabaseNotReady: could not reach FIRESTORE_ENTERPRISE_URI"
     try:
-        await _db.command("ping")
-        return True
-    except Exception:  # noqa: BLE001 - health checks report, they do not crash
-        return False
+        await asyncio.wait_for(_db.command("ping"), timeout=3.0)
+        return True, None
+    except TimeoutError:
+        return False, "ServerSelectionTimeoutError: could not reach FIRESTORE_ENTERPRISE_URI"
+    except (ServerSelectionTimeoutError, PyMongoError) as exc:
+        return False, f"{type(exc).__name__}: could not reach FIRESTORE_ENTERPRISE_URI"
+    except Exception as exc:
+        log.warning("db: health ping failed (%s)", type(exc).__name__)
+        return False, f"{type(exc).__name__}: could not reach FIRESTORE_ENTERPRISE_URI"

@@ -534,3 +534,39 @@ async def save_cached_locality(locality: str, city: str | None, context: dict[st
         {"$set": {"context": context, "cached_at": utcnow(), "locality": locality, "city": city}},
         upsert=True,
     )
+
+
+# --------------------------------------------------------------------------
+# dashboard aggregates
+# --------------------------------------------------------------------------
+
+
+async def calls_for_sessions(session_ids: list[str], limit: int = 25) -> list[CallLog]:
+    """Recent calls across several searches, newest first.
+
+    One query with ``$in`` rather than a loop over sessions: the dashboard shows
+    a handful of rows and must not cost one round trip per search the customer
+    has ever run.
+    """
+    if not session_ids:
+        return []
+    docs = (
+        await get_db()[CALLS]
+        .find({"session_id": {"$in": session_ids}})
+        .sort([("created_at", DESCENDING)])
+        .to_list(length=limit)
+    )
+    return [_model(CallLog, d) for d in docs]
+
+
+async def listings_by_ids(listing_ids: list[str]) -> dict[str, Listing]:
+    """The listings behind a set of calls, keyed by id."""
+    if not listing_ids:
+        return {}
+    docs = await get_db()[LISTINGS].find({"_id": {"$in": listing_ids}}).to_list(length=len(listing_ids))
+    out: dict[str, Listing] = {}
+    for doc in docs:
+        listing = _model(Listing, doc)
+        if listing is not None:
+            out[listing.id] = listing
+    return out

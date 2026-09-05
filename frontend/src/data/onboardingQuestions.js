@@ -64,3 +64,30 @@ export const RENT_QUESTIONS = [
   { id: 'rent-transit', text: 'Close to public transport' },
   { id: 'rent-internet', text: 'Broadband / internet ready' },
 ];
+
+/**
+ * Localities offered as you type on the "Preferred locality or area?" step.
+ *
+ * A plain list, matched in the browser — a free-text box gave no feedback and
+ * invited spellings the search then could not resolve. Typing something not on
+ * the list is still accepted; these are suggestions, not a whitelist.
+ */
+export const LOCALITIES = [
+  // Bengaluru
+  'Indiranagar', 'Koramangala', 'HSR Layout', 'Whitefield', 'Marathahalli',
+  'Jayanagar', 'JP Nagar', 'Bellandur', 'Sarjapur Road', 'Electronic City',
+  'Hebbal', 'Yelahanka', 'Rajajinagar', 'Malleshwaram', 'Banashankari',
+  'BTM Layout', 'Basavanagudi', 'Domlur', 'Ulsoor', 'Kalyan Nagar',
+  'Banaswadi', 'CV Raman Nagar', 'Hennur', 'Thanisandra', 'Kengeri',
+  // Hyderabad
+  'Kondapur', 'Gachibowli', 'Madhapur', 'HITEC City', 'Kukatpally',
+  'Banjara Hills', 'Jubilee Hills', 'Miyapur', 'Manikonda', 'Begumpet',
+  'Ameerpet', 'Secunderabad', 'Nallagandla', 'Narsingi', 'Kompally',
+  // Chennai
+  'Adyar', 'Velachery', 'Anna Nagar', 'T Nagar', 'OMR', 'Porur', 'Guindy',
+  // Pune
+  'Kothrud', 'Baner', 'Hinjewadi', 'Viman Nagar', 'Wakad', 'Kharadi',
+  // Mumbai / NCR
+  'Andheri', 'Powai', 'Thane', 'Bandra', 'Borivali',
+  'Gurgaon Sector 56', 'Noida Sector 62', 'Dwarka', 'Saket',
+];
