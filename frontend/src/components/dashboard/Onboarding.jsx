@@ -7,7 +7,8 @@ import {
   BUY_QUESTIONS,
   RENT_QUESTIONS,
   MAX_SECONDARY_PICKS,
-  LOCALITIES,
+  localitiesFor,
+  LOCATION_KEY,
 } from '../../data/onboardingQuestions';
 
 const Overlay = styled.div`
@@ -250,7 +251,12 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
   // "nagar" finds Anna Nagar and Kalyan Nagar, not just names starting with it.
   const suggestions =
     currentQ?.id === 'locality' && draft.trim()
-      ? LOCALITIES.filter((x) => x.toLowerCase().includes(draft.trim().toLowerCase())).slice(0, 6)
+      ? // Scoped to the city answered a step earlier. A flat national list
+        // suggested Yelahanka to somebody searching Hyderabad, and the search
+        // that followed could not be answered by any portal.
+        localitiesFor(answers.city)
+          .filter((x) => x.toLowerCase().includes(draft.trim().toLowerCase()))
+          .slice(0, 6)
       : [];
   const dealType = answers.dealType;
   const secondaryBank = dealType === 'Buy' ? BUY_QUESTIONS : RENT_QUESTIONS;
@@ -356,6 +362,16 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
       )
     );
 
+    // Persisted as fields, not prose, so the search can send them explicitly.
+    try {
+      window.localStorage.setItem(
+        LOCATION_KEY,
+        JSON.stringify({ city: answers.city || '', locality: answers.locality || '' }),
+      );
+    } catch {
+      /* private mode — the search still works, it just re-asks in the prompt */
+    }
+
     onComplete([...commonCards, ...pickedBankCards, ...customCards]);
   };
 
@@ -418,7 +434,11 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
                   <TextInput
                     placeholder={
                       currentQ.id === 'locality'
-                        ? 'Start typing an area…'
+                        ? // Real examples from the city they just picked, so the
+                          // hint teaches the format instead of describing it.
+                          `e.g. ${(localitiesFor(answers.city).slice(0, 3).join(', ')) || 'HSR Layout, Gachibowli, Andheri'}`
+                        : currentQ.id === 'city'
+                          ? 'Or type another city'
                         : currentQ.options.length > 0
                           ? 'Or write your own answer'
                           : 'Type your answer'

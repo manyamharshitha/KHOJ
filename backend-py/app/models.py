@@ -356,6 +356,11 @@ class CallLog(Base):
     """One outbound call, its recording, and everything that was said."""
 
     id: str
+    #: Who the call was placed for. Denormalised from the session so the
+    #: per-account rate limits can be counted from the calls themselves — a
+    #: counter on the user document would drift the moment a crash landed
+    #: between dialling and incrementing it.
+    customer_id: str | None = None
     session_id: str
     listing_id: str
 
@@ -566,6 +571,20 @@ class SearchRequest(Base):
     """``POST /api/search`` body."""
 
     prompt: str = Field(min_length=3, max_length=4000)
+
+    #: The city, stated rather than inferred.
+    #:
+    #: Portals index by city and reject a locality in that slot — MagicBricks
+    #: answers "Oops... something is missing" for cityName=Kondapur. Until now
+    #: the city was only ever guessed from the prompt by the model, so a parse
+    #: failure or an exhausted quota silently produced a search of whatever the
+    #: default happened to be. Sent explicitly, it survives both.
+    city: str | None = Field(default=None, max_length=120)
+
+    #: Neighbourhoods within that city. Used to narrow results after
+    #: extraction, never to build the portal URL.
+    localities: list[str] = Field(default_factory=list, max_length=10)
+
     #: Portal keys (``nobroker``) or full URLs. Empty means use the defaults.
     sites: list[str] = Field(default_factory=list, max_length=5)
     #: Listing text or raw HTML the customer pasted. Skips crawling entirely,

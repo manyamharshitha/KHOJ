@@ -37,6 +37,54 @@ class LLMUnavailable(LLMError):
 
 _openai_client: Any = None
 _gemini_client: Any = None
+_anthropic_client: Any = None
+
+
+def _anthropic() -> Any:
+    global _anthropic_client
+    if _anthropic_client is None:
+        if not settings.anthropic_api_key:
+            raise LLMUnavailable("ANTHROPIC_API_KEY is not set")
+        from anthropic import AsyncAnthropic
+
+        _anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    return _anthropic_client
+
+
+def anthropic_available() -> bool:
+    return bool(settings.anthropic_api_key)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Whether another provider is worth trying for this failure.
+
+    Rate limits, timeouts, connection faults and 5xx are the provider's problem
+    and someone else may well succeed. A 400 or a 401 is our problem — the
+    prompt is malformed or the key is wrong — and retrying it elsewhere just
+    fails twice and doubles the latency.
+    """
+    try:
+        import anthropic
+    except ImportError:
+        return True
+
+    if isinstance(
+        exc,
+        (
+            anthropic.RateLimitError,
+            anthropic.APITimeoutError,
+            anthropic.APIConnectionError,
+            anthropic.InternalServerError,
+        ),
+    ):
+        return True
+    if isinstance(exc, anthropic.APIStatusError):
+        return exc.status_code >= 500 or exc.status_code == 429
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in ("429", "resource_exhausted", "timeout", "unavailable", "503", "overloaded")
+    )
 
 
 def _openai() -> Any:
@@ -314,9 +362,17 @@ async def stream_text(
     Gemini only. OpenAI streams too, but nothing calls this on that path yet and
     an untested branch is worse than an honest refusal.
     """
-    if settings.llm_provider != "gemini":
-        raise LLMUnavailable("streaming is implemented for Gemini only")
+    async for piece in generate_stream(
+        user,
+        system,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    ):
+        yield piece
+    return
 
+    # unreachable; kept so the original single-provider path stays readable
     from google.genai import types
 
     chosen = model or settings.extraction_model
@@ -327,9 +383,107 @@ async def stream_text(
             system_instruction=system,
             temperature=temperature,
             max_output_tokens=max_tokens,
+            # Automatic function calling on a raw generation stream makes
+            # the SDK warn and can stall the iterator waiting on a tool
+            # round-trip that is never coming. No tools are declared here,
+            # so it is turned off rather than left to warn on every chunk.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
         ),
     )
     async for chunk in stream:
         text = getattr(chunk, "text", None)
         if text:
             yield text
+
+
+# --------------------------------------------------------------------------
+# unified streaming with failover
+# --------------------------------------------------------------------------
+
+
+async def _anthropic_stream(
+    system: str, user: str, model: str, temp: float, max_tokens: int
+) -> AsyncIterator[str]:
+    """Claude, streamed. Yields text deltas only."""
+    async with _anthropic().messages.stream(
+        model=model or settings.anthropic_model,
+        max_tokens=max_tokens,
+        temperature=temp,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    ) as stream:
+        async for piece in stream.text_stream:
+            if piece:
+                yield piece
+
+
+async def _gemini_stream(
+    system: str, user: str, model: str, temp: float, max_tokens: int
+) -> AsyncIterator[str]:
+    """Gemini, streamed, through the chat interface.
+
+    ``chats.create(...).send_message_stream`` rather than
+    ``generate_content_stream``: the latter runs automatic function calling on a
+    raw generation stream, which the SDK warns about and which can stall the
+    iterator waiting on a tool round-trip that is never coming.
+    """
+    from google.genai import types
+
+    chat = _gemini().aio.chats.create(
+        model=model or settings.extraction_model,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=temp,
+            max_output_tokens=max_tokens,
+        ),
+    )
+    async for chunk in await chat.send_message_stream(user):
+        text = getattr(chunk, "text", None)
+        if text:
+            yield text
+
+
+async def generate_stream(
+    prompt: str,
+    system_instruction: str = "",
+    *,
+    model: str | None = None,
+    temperature: float = 0.0,
+    max_tokens: int = 2048,
+) -> AsyncIterator[str]:
+    """Stream a completion, whichever provider is able to serve it.
+
+    Claude first when a key is configured, Gemini otherwise and on failover.
+    Chunks look identical either way, so nothing downstream knows or cares which
+    one answered.
+
+    The failover only fires **before the first chunk**. Once text has reached the
+    reader, switching providers mid-answer would splice two different completions
+    into one paragraph — so a mid-stream failure is surfaced rather than papered
+    over with a second opinion.
+    """
+    primary_is_anthropic = settings.llm_provider == "anthropic" and anthropic_available()
+
+    if primary_is_anthropic:
+        started = False
+        try:
+            async for piece in _anthropic_stream(
+                system_instruction, prompt, model or "", temperature, max_tokens
+            ):
+                started = True
+                yield piece
+            return
+        except Exception as exc:  # noqa: BLE001 - normalise every SDK's error type
+            if started or not (settings.llm_failover and _is_retryable(exc)):
+                raise LLMError(f"anthropic stream failed: {exc}") from exc
+            log.warning("llm: anthropic unavailable (%s) — falling back to gemini", exc)
+
+    try:
+        async for piece in _gemini_stream(
+            system_instruction, prompt, model or "", temperature, max_tokens
+        ):
+            yield piece
+    except Exception as exc:  # noqa: BLE001
+        raise LLMError(f"gemini stream failed: {exc}") from exc

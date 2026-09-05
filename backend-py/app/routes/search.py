@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
 from app.config import settings
 from app.core.auth import OptionalUser, read_quota, require_user
-from app.core.plans import Quota, clip_to_plan
+from app.core.plans import Quota, check_call_allowance, clip_to_plan
 from app.llm.preferences import parse_preferences
 from app.models import (
     PASTED_PLACEHOLDER_URL,
@@ -28,6 +28,8 @@ from app.pipeline import run_calls, run_search
 from app.ranking import rank_listings
 from app.repositories import (
     calls_for_session,
+    count_calls_ever,
+    count_calls_since,
     create_session,
     get_cached_locality,
     get_session,
@@ -94,6 +96,25 @@ async def start_search(
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=quota.message())
 
     criteria = await parse_preferences(body.prompt)
+
+    # What the customer stated overrides what the model guessed — explicit beats
+    # inferred. This also keeps a search working when preference parsing fails
+    # outright: the prompt still shapes the questions, but the city that decides
+    # which page is fetched no longer depends on a model call succeeding.
+    if body.city:
+        criteria.city = body.city.strip()
+    if body.localities:
+        stated = [x.strip() for x in body.localities if x.strip()]
+        # Ahead of anything parsed, and de-duplicated case-insensitively so
+        # "Kondapur" typed and "kondapur" inferred do not both survive.
+        seen: set[str] = set()
+        merged: list[str] = []
+        for item in stated + list(criteria.localities):
+            if item.lower() in seen:
+                continue
+            seen.add(item.lower())
+            merged.append(item)
+        criteria.localities = merged[:10]
 
     pasted = (body.pasted_content or "").strip() or None
 
@@ -318,7 +339,24 @@ async def call_all(
     if quota.exhausted:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=quota.message())
 
-    ceiling = min(limit or settings.max_calls_per_session, quota.remaining)
+    # Rate limits, checked before anything is dialled. 403 rather than 402: this
+    # is not a "pay us" wall, it is a ceiling that applies whatever the plan,
+    # and the frontend styles the two differently.
+    allowance = check_call_allowance(
+        tier=tier,
+        calls_today=await count_calls_since(account.uid, utcnow() - timedelta(days=1)),
+        calls_ever=await count_calls_ever(account.uid),
+        daily_limit=settings.max_calls_per_day,
+        free_lifetime_limit=settings.free_plan_lifetime_calls,
+    )
+    if not allowance.allowed:
+        log.info("call-all refused for %s: %s", account.uid, allowance.reason)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=allowance.message())
+
+    # Never dial more than the daily allowance leaves, even if more were asked
+    # for: a session with ten dialable listings must not spend ten calls.
+    remaining_today = max(0, settings.max_calls_per_day - allowance.calls_today)
+    ceiling = min(limit or settings.max_calls_per_session, quota.remaining, remaining_today)
     background.add_task(run_calls, session_id, ceiling)
     return {
         "session_id": session_id,

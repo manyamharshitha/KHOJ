@@ -1,5 +1,14 @@
 export const ONBOARDING_DONE_KEY = 'khoj-onboarding-done';
 export const ONBOARDING_RESULT_KEY = 'khoj-onboarding-result';
+
+/**
+ * Where the city and locality are kept.
+ *
+ * Separate from the questionnaire result, which is a list of display cards. The
+ * search needs these two as fields — the portal URL is built from the city —
+ * and digging them back out of rendered card text would be guesswork.
+ */
+export const LOCATION_KEY = 'khoj-location';
 export const TOUR_DONE_KEY = 'khoj-tour-done';
 export const MAX_SECONDARY_PICKS = 5;
 
@@ -31,7 +40,8 @@ export const COMMON_QUESTIONS = [
   { id: 'dealType', text: 'Are you renting or buying?', options: ['Rent', 'Buy'] },
   { id: 'budget', text: "What's your budget?", options: ['Under ₹25,000', 'Under ₹35,000', 'Under ₹50,000'] },
   { id: 'bhk', text: 'How many bedrooms?', options: ['1 BHK', '2 BHK', '3 BHK', '4+ BHK'] },
-  { id: 'locality', text: 'Preferred locality or area?', options: [] },
+  { id: 'city', text: 'Which city?', options: ['Hyderabad', 'Bengaluru', 'Mumbai', 'Pune', 'Delhi NCR', 'Chennai'] },
+  { id: 'locality', text: 'Preferred locality, town, or neighbourhood?', options: [] },
   { id: 'movein', text: 'When do you need to move in?', options: ['Immediately', 'Within a month', 'Flexible'] },
   { id: 'household', text: "Who's this home for?", options: ['Family', 'Bachelor', 'Couple'] },
   { id: 'parking', text: 'Do you need parking?', options: ['Yes', 'No', "Doesn't matter"] },
@@ -66,28 +76,58 @@ export const RENT_QUESTIONS = [
 ];
 
 /**
- * Localities offered as you type on the "Preferred locality or area?" step.
+ * Localities, grouped by the city they belong to.
  *
- * A plain list, matched in the browser — a free-text box gave no feedback and
- * invited spellings the search then could not resolve. Typing something not on
- * the list is still accepted; these are suggestions, not a whitelist.
+ * This used to be one flat list with Bengaluru first, so somebody searching in
+ * Hyderabad was offered Yelahanka and Koramangala — suggestions that are not
+ * merely unhelpful but wrong, and which produce a search the portal cannot
+ * answer. Suggestions are now filtered to the chosen city.
+ *
+ * Typing something not on a list is still accepted. These are suggestions, not
+ * a whitelist: no list of Indian neighbourhoods is ever complete.
  */
-export const LOCALITIES = [
-  // Bengaluru
-  'Indiranagar', 'Koramangala', 'HSR Layout', 'Whitefield', 'Marathahalli',
-  'Jayanagar', 'JP Nagar', 'Bellandur', 'Sarjapur Road', 'Electronic City',
-  'Hebbal', 'Yelahanka', 'Rajajinagar', 'Malleshwaram', 'Banashankari',
-  'BTM Layout', 'Basavanagudi', 'Domlur', 'Ulsoor', 'Kalyan Nagar',
-  'Banaswadi', 'CV Raman Nagar', 'Hennur', 'Thanisandra', 'Kengeri',
-  // Hyderabad
-  'Kondapur', 'Gachibowli', 'Madhapur', 'HITEC City', 'Kukatpally',
-  'Banjara Hills', 'Jubilee Hills', 'Miyapur', 'Manikonda', 'Begumpet',
-  'Ameerpet', 'Secunderabad', 'Nallagandla', 'Narsingi', 'Kompally',
-  // Chennai
-  'Adyar', 'Velachery', 'Anna Nagar', 'T Nagar', 'OMR', 'Porur', 'Guindy',
-  // Pune
-  'Kothrud', 'Baner', 'Hinjewadi', 'Viman Nagar', 'Wakad', 'Kharadi',
-  // Mumbai / NCR
-  'Andheri', 'Powai', 'Thane', 'Bandra', 'Borivali',
-  'Gurgaon Sector 56', 'Noida Sector 62', 'Dwarka', 'Saket',
-];
+export const CITIES = ['Hyderabad', 'Bengaluru', 'Mumbai', 'Pune', 'Delhi NCR', 'Chennai'];
+
+export const LOCALITIES_BY_CITY = {
+  Hyderabad: [
+    'Kondapur', 'Gachibowli', 'Madhapur', 'HITEC City', 'Kukatpally',
+    'Banjara Hills', 'Jubilee Hills', 'Miyapur', 'Manikonda', 'Begumpet',
+    'Ameerpet', 'Secunderabad', 'Nallagandla', 'Narsingi', 'Kompally',
+  ],
+  Bengaluru: [
+    'Indiranagar', 'Koramangala', 'HSR Layout', 'Whitefield', 'Marathahalli',
+    'Jayanagar', 'JP Nagar', 'Bellandur', 'Sarjapur Road', 'Electronic City',
+    'Hebbal', 'Yelahanka', 'Rajajinagar', 'Malleshwaram', 'Banashankari',
+    'BTM Layout', 'Basavanagudi', 'Domlur', 'Ulsoor', 'Kalyan Nagar',
+  ],
+  Mumbai: [
+    'Andheri', 'Powai', 'Bandra', 'Borivali', 'Thane', 'Malad', 'Goregaon',
+    'Chembur', 'Dadar', 'Navi Mumbai', 'Vashi', 'Kurla',
+  ],
+  Pune: [
+    'Kothrud', 'Baner', 'Hinjewadi', 'Viman Nagar', 'Wakad', 'Kharadi',
+    'Aundh', 'Magarpatta', 'Hadapsar', 'Balewadi',
+  ],
+  'Delhi NCR': [
+    'Gurgaon Sector 56', 'Noida Sector 62', 'Dwarka', 'Saket', 'Rohini',
+    'Indirapuram', 'Vasant Kunj', 'Greater Kailash', 'Lajpat Nagar',
+  ],
+  Chennai: [
+    'Adyar', 'Velachery', 'Anna Nagar', 'T Nagar', 'OMR', 'Porur', 'Guindy',
+    'Nungambakkam', 'Perungudi', 'Sholinganallur',
+  ],
+};
+
+/**
+ * Suggestions for one city.
+ *
+ * An unrecognised city — someone typed "Kochi" — returns nothing rather than
+ * falling back to every locality in the country. Offering Bengaluru suburbs to
+ * a Kochi search is worse than offering none.
+ */
+export function localitiesFor(city) {
+  return LOCALITIES_BY_CITY[(city || '').trim()] || [];
+}
+
+/** Every locality, for the rare caller that has no city yet. */
+export const LOCALITIES = Object.values(LOCALITIES_BY_CITY).flat();

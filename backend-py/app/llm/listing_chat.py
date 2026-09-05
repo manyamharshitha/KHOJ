@@ -45,7 +45,7 @@ class ListingAnswer(Base):
     #: Which question was asked. ``platform`` answers are general help and are
     #: not held to the transcript, because there is no transcript to hold them
     #: to — the evidence guard applies to ``listing`` answers only.
-    intent: Literal["listing", "platform"] = "listing"
+    intent: Literal["listing", "platform", "locality"] = "listing"
     answer: str = Field(max_length=800)
     #: Whether the call actually established this. False means say so plainly.
     covered: bool
@@ -67,6 +67,11 @@ advert was accurate.
 Set intent="platform" when the question is about Khoj itself - how to run a
 search, how to add a listing, plans and pricing, quota, how the calls work, what
 a score means, how to get more verifications.
+
+Set intent="locality" when the question is about the AREA rather than the flat -
+flooding, waterlogging, water supply, commute, traffic, safety, what it is like
+to live there. Answer those from the neighbourhood notes below, never from the
+call.
 
 If a question could be either, prefer "listing". The customer is looking at one
 property, and that is usually what she means.
@@ -106,7 +111,20 @@ Set covered=true and leave quote empty. Use only these facts:
 If a platform question is not covered by those facts, say you are not sure and
 suggest contacting the team. Never invent a price, a feature, or a policy.
 
-## Both kinds
+## Answering a locality question (intent="locality")
+
+Set covered=true and leave quote empty. Use ONLY the neighbourhood notes given
+to you, which are opinions people posted publicly - not verified facts.
+
+- Attribute them: "residents there report...", "people posting about the area
+  mention...". Never state them as established.
+- If the notes do not cover what was asked, set covered=false and say the
+  discussion did not mention it. Do not fall back on general knowledge about
+  the city.
+- Never quote a rent from the notes. Rent comes from the phone call, and a
+  figure from a forum would undercut a verified one.
+
+## All three kinds
 
 - Be brief. Two sentences at most.
 - Never advise on whether something is a good deal, and never invent a viewing
@@ -151,6 +169,34 @@ def _honesty_text(report: HonestyReport | None) -> str:
     return "\n".join(lines)
 
 
+def _locality_text(context: dict[str, Any] | None) -> str:
+    """Neighbourhood notes for the prompt, or an honest absence.
+
+    Deliberately labelled as unverified opinion. The call transcript and a
+    stranger's Reddit comment are both "context", and a model given them in the
+    same voice will happily cite the comment as though the broker had said it.
+    """
+    if not context:
+        return "(no neighbourhood discussion was found for this area)"
+
+    lines: list[str] = []
+    if context.get("summary"):
+        lines.append(f"Summary: {context['summary']}")
+    for key, label in (("pros", "Reported positive"), ("cons", "Reported negative"),
+                       ("known_issues", "Recurring issue")):
+        for item in context.get(key) or []:
+            lines.append(f"{label}: {item}")
+    if not lines:
+        return "(no neighbourhood discussion was found for this area)"
+
+    count = context.get("post_count") or 0
+    header = (
+        f"Unverified opinions from {count} public forum post(s) about "
+        f"{context.get('locality') or 'this area'}:"
+    )
+    return header + "\n" + "\n".join(lines)
+
+
 def _normalise(text: str) -> str:
     """Collapse whitespace and case so a quote match is not defeated by layout."""
     return re.sub(r"\s+", " ", text or "").strip().lower()
@@ -174,6 +220,7 @@ async def answer_about_listing(
     listing: Listing,
     call: CallLog | None,
     report: HonestyReport | None,
+    locality: dict[str, Any] | None = None,
 ) -> ListingAnswer:
     """Answer one question about one listing, grounded in its call.
 
@@ -202,6 +249,7 @@ async def answer_about_listing(
         f"## The advert\n\n{_advert_text(listing)}\n\n"
         f"## The call transcript\n\n{transcript}\n\n"
         f"## Honesty analysis\n\n{_honesty_text(report)}\n\n"
+        f"## Neighbourhood notes (unverified)\n\n{_locality_text(locality)}\n\n"
         f"## The tenant asks\n\n{question.strip()}"
     )
 
@@ -275,6 +323,7 @@ async def stream_about_listing(
     listing: Listing,
     call: CallLog | None,
     report: HonestyReport | None,
+    locality: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream an answer, then say whether it held up.
 
@@ -299,6 +348,7 @@ async def stream_about_listing(
         f"## The advert\n\n{_advert_text(listing)}\n\n"
         f"## The call transcript\n\n{transcript or '(no call transcript)'}\n\n"
         f"## Honesty analysis\n\n{_honesty_text(report)}\n\n"
+        f"## Neighbourhood notes (unverified)\n\n{_locality_text(locality)}\n\n"
         f"## The tenant asks\n\n{question.strip()}"
     )
 

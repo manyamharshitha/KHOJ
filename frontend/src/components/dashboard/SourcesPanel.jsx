@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, CardRow, Badge, Switch, IconButton, TextInput } from './dashboardUI';
 import { defaultSources } from '../../data/listingSources';
+import { LOCATION_KEY } from '../../data/onboardingQuestions';
 import { useSearchSession } from '../../lib/SearchContext';
-import { addManualListing } from '../../lib/api';
+import { addManualListing, callAll as callAllApi } from '../../lib/api';
+import ConfirmDialog from '../ui/ConfirmDialog';
 import { useProfile } from '../../lib/useKhoj';
 import Button from '../ui/Button';
 
@@ -119,6 +121,12 @@ const SourcesPanel = ({ onNavigate }) => {
   });
   const [manualState, setManualState] = useState({ status: 'idle', message: null });
 
+  // A search that found dialable listings, waiting for the go-ahead. Calls
+  // are not placed as a side effect of searching: the search is free and
+  // reversible, the call is neither.
+  const [pendingCall, setPendingCall] = useState(null);
+  const [callState, setCallState] = useState({ busy: false, error: null });
+
   const setField = (k) => (e) => setManual((prev) => ({ ...prev, [k]: e.target.value }));
 
   const submitManual = async (e) => {
@@ -170,11 +178,54 @@ const SourcesPanel = ({ onNavigate }) => {
       ...sources.filter((s) => s.enabled).map((s) => s.key ?? s.id),
     ].slice(0, 5); // the backend caps at five and rejects more
 
-    const id = await startSearch({ prompt: text, sites });
-    if (id) {
-      await callAll();
-      onNavigate?.('results');
+    // The questionnaire already asked which city and which area. Sending them
+    // as fields, rather than hoping the model re-extracts them from the prompt,
+    // is what makes the portal URL correct even when parsing is unavailable.
+    let city;
+    let localities = [];
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(LOCATION_KEY) || '{}');
+      city = saved.city || undefined;
+      if (saved.locality) localities = [saved.locality];
+    } catch {
+      /* no saved answers is normal on a first visit */
     }
+
+    const id = await startSearch({ prompt: text, city, localities, sites });
+    if (id) {
+      // Stop here and ask. Dialling used to happen automatically the moment a
+      // search finished, so a customer could ring a stranger without ever
+      // having agreed to it.
+      setCallState({ busy: false, error: null });
+      setPendingCall({ sessionId: id, prompt: text });
+    }
+  };
+
+  /** Place the calls, now that the customer has said yes. */
+  const confirmCall = async () => {
+    if (!pendingCall) return;
+    setCallState({ busy: true, error: null });
+    try {
+      await callAllApi(pendingCall.sessionId, 1);
+      setPendingCall(null);
+      setCallState({ busy: false, error: null });
+      onNavigate?.('results');
+    } catch (err) {
+      // 403 is a rate limit, 402 is an exhausted plan. Both carry a message
+      // written for the customer, so it is shown rather than replaced.
+      setCallState({
+        busy: false,
+        error: err?.message || 'That call could not be placed.',
+      });
+    }
+  };
+
+  /** Keep the results, skip the calls. */
+  const cancelCall = () => {
+    const target = pendingCall;
+    setPendingCall(null);
+    setCallState({ busy: false, error: null });
+    if (target) onNavigate?.('results');
   };
 
   const toggleSource = (id) =>
@@ -242,6 +293,28 @@ const SourcesPanel = ({ onNavigate }) => {
           </Button>
         </AddRow>
       </Card>
+
+      <ConfirmDialog
+        open={Boolean(pendingCall)}
+        title="Place a verification call?"
+        confirmLabel="Yes, call now"
+        cancelLabel="Not now"
+        busy={callState.busy}
+        onConfirm={confirmCall}
+        onCancel={cancelCall}
+      >
+        <p style={{ margin: '0 0 0.7rem' }}>
+          Khoj will phone the owner or broker for the best match it found, say it is an AI
+          assistant calling for you, and ask permission to record.
+        </p>
+        <p style={{ margin: '0 0 0.7rem' }}>
+          This is a <strong>real phone call to a real person</strong> and it uses one of your
+          daily verifications. It cannot be undone once it starts.
+        </p>
+        {callState.error && (
+          <p style={{ margin: 0, color: '#b3261e' }}>{callState.error}</p>
+        )}
+      </ConfirmDialog>
 
       <Note>Custom sources are checked the same way as our defaults — no extra setup on your end.</Note>
 

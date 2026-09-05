@@ -33,6 +33,7 @@ from app.models import (
 )
 from app.repositories import (
     calls_for_session,
+    get_cached_locality,
     get_listing,
     get_session,
     reports_for_session,
@@ -138,7 +139,11 @@ async def ask(body: AskRequest, user: OptionalUser = None) -> AskResponse:
     )
 
     result = await answer_about_listing(
-        question=body.user_question, listing=listing, call=call, report=report
+        question=body.user_question,
+        listing=listing,
+        call=call,
+        report=report,
+        locality=await _locality_for(listing),
     )
     context = build_context(call)
 
@@ -221,6 +226,22 @@ async def _answer_inline(body: AskRequest) -> AskResponse:
     )
 
 
+async def _locality_for(listing: Listing) -> dict[str, object] | None:
+    """Cached neighbourhood notes for this listing's area, if any.
+
+    Cache-only on purpose. Fetching Reddit and summarising it takes seconds, and
+    a chat box must answer now — the locality endpoint warms this cache, and
+    until it has, area questions honestly say the discussion was not found.
+    """
+    if not listing.locality:
+        return None
+    try:
+        return await get_cached_locality(listing.locality, None)
+    except Exception:  # noqa: BLE001 - context is optional, never fatal
+        log.exception("chat: could not read locality cache")
+        return None
+
+
 async def _resolve(body: AskRequest) -> tuple[Listing, CallLog | None, object | None]:
     """The listing, its most recent call with speech, and its honesty report.
 
@@ -301,11 +322,16 @@ async def ask_streaming(body: AskRequest, user: OptionalUser = None) -> Streamin
     """
     await require_user(user)
     listing, call, report = await _resolve(body)
+    locality = await _locality_for(listing)
 
     async def events():
         try:
             async for event in stream_about_listing(
-                question=body.user_question, listing=listing, call=call, report=report
+                question=body.user_question,
+                listing=listing,
+                call=call,
+                report=report,
+                locality=locality,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception:  # noqa: BLE001 - a dead stream must still close cleanly

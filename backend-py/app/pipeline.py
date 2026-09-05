@@ -346,6 +346,7 @@ async def _call_one(session: SearchSession, listing: Listing) -> None:
         call = CallLog(
             id=new_id("cal"),
             session_id=session.id,
+            customer_id=session.customer_id,
             listing_id=listing.id,
             phone_dialed=phone,
         )

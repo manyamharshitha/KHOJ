@@ -19,6 +19,7 @@ from fastapi import Depends, Header, HTTPException, status
 from firebase_admin import auth as fb_auth
 
 from app.config import settings
+from app.firebase import _app
 from app.core.plans import DEFAULT_TIER, Tier, limit_for, normalise_tier
 from app import repositories as repo
 from app.models import UserProfile, as_utc, utcnow
@@ -57,16 +58,39 @@ def verify_google_token(id_token: str) -> dict[str, Any]:
     token stays valid for its full hour after the user signs out or an account is
     disabled.
     """
+    # Checked before the SDK sees it. ``verify_id_token`` raises a bare
+    # ValueError on an empty string, which is indistinguishable in the logs from
+    # a real verification failure and sent people hunting for a token problem
+    # that was really a missing header.
+    token = (id_token or "").strip()
+    if not token:
+        log.warning("auth: no token supplied")
+        raise AuthError()
+
     try:
-        return fb_auth.verify_id_token(id_token, check_revoked=True)
+        # ``app=`` explicitly. Without it the SDK looks for a default app that
+        # only exists if something else happened to initialise Firebase first,
+        # so sign-in worked or failed depending on which endpoint was hit
+        # first after a restart.
+        return fb_auth.verify_id_token(token, app=_app(), check_revoked=True)
     except fb_auth.RevokedIdTokenError as exc:
         raise AuthError("That session has ended. Sign in again.") from exc
     except fb_auth.ExpiredIdTokenError as exc:
         raise AuthError("That session has expired. Sign in again.") from exc
     except fb_auth.UserDisabledError as exc:
         raise AuthError("That account has been disabled.") from exc
+    except ValueError as exc:
+        # Not a rejected token — a misconfigured server. The Admin SDK raises
+        # ValueError when it has no project id to verify against, which is a
+        # deployment problem the operator must see stated plainly.
+        log.error("auth: cannot verify tokens — %s", exc)
+        raise AuthError("Sign-in is not configured on this server.") from exc
     except Exception as exc:  # noqa: BLE001 - many SDK error types, one answer
-        log.warning("auth: token rejected (%s)", type(exc).__name__)
+        # The *reason* is logged for the operator but never returned: telling a
+        # caller which check they tripped tells them how to pass it. Logging only
+        # the exception class, as this used to, hid the reason from the operator
+        # too — which is why "token rejected (ValueError)" was undebuggable.
+        log.warning("auth: token rejected — %s: %s", type(exc).__name__, exc)
         raise AuthError("That sign-in could not be verified.") from exc
 
 

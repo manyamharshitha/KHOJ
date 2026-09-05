@@ -143,11 +143,19 @@ export function useSearch() {
 
   useEffect(() => () => { cancelled.current = true; }, []);
 
-  const start = useCallback(async ({ prompt, sites = [], pastedContent, autoCall = false }) => {
+  const start = useCallback(
+    async ({ prompt, city, localities = [], sites = [], pastedContent, autoCall = false }) => {
     setError(null);
     setStatus('starting');
     try {
-      const created = await api.startSearch({ prompt, sites, pastedContent, autoCall });
+      const created = await api.startSearch({
+        prompt,
+        city,
+        localities,
+        sites,
+        pastedContent,
+        autoCall,
+      });
       if (cancelled.current) return null;
       setSessionId(created.session_id);
       setStatus('running');

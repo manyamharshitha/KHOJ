@@ -570,3 +570,36 @@ async def listings_by_ids(listing_ids: list[str]) -> dict[str, Listing]:
         if listing is not None:
             out[listing.id] = listing
     return out
+
+
+# --------------------------------------------------------------------------
+# call rate limits
+# --------------------------------------------------------------------------
+
+
+async def count_calls_since(uid: str, since: datetime) -> int:
+    """Calls this account has placed since ``since``.
+
+    Counted from the calls themselves rather than a counter on the user, so a
+    crash between "dial" and "increment" cannot hand out a free call. Attempts
+    that were blocked before dialling do not count — being refused is not using
+    your allowance.
+    """
+    if not uid or uid in ("anonymous", "usr_dev"):
+        return 0
+    return await get_db()[CALLS].count_documents(
+        {
+            "customer_id": uid,
+            "created_at": {"$gte": since},
+            "call_status": {"$nin": [CallStatus.BLOCKED.value]},
+        }
+    )
+
+
+async def count_calls_ever(uid: str) -> int:
+    """Every call this account has placed, for the free-plan lifetime cap."""
+    if not uid or uid in ("anonymous", "usr_dev"):
+        return 0
+    return await get_db()[CALLS].count_documents(
+        {"customer_id": uid, "call_status": {"$nin": [CallStatus.BLOCKED.value]}}
+    )

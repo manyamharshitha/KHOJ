@@ -315,7 +315,7 @@ const QuestionsPanel = () => {
 
       <AddOptionRow onSubmit={(e) => addOption(q.id, e)}>
         <SmallInput
-          placeholder="Add your own answer, e.g. I have a peanut allergy"
+          placeholder="Add a question for the broker, e.g. Is there a water shortage in summer?"
           value={optionDrafts[q.id] || ''}
           onChange={(e) => setOptionDrafts((prev) => ({ ...prev, [q.id]: e.target.value }))}
         />

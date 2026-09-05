@@ -135,3 +135,73 @@ def plan_catalogue() -> list[dict[str, object]]:
         }
         for tier in (Tier.FREE, Tier.SILVER, Tier.GOLD, Tier.PREMIUM)
     ]
+
+
+@dataclass(frozen=True, slots=True)
+class CallAllowance:
+    """Whether this account may place a call right now, and why not."""
+
+    allowed: bool
+    reason: str | None = None
+    calls_today: int = 0
+    calls_ever: int = 0
+    daily_limit: int = 1
+    lifetime_limit: int | None = None
+
+    def message(self) -> str:
+        return self.reason or "You can place this call."
+
+
+def check_call_allowance(
+    *,
+    tier: Tier,
+    calls_today: int,
+    calls_ever: int,
+    daily_limit: int,
+    free_lifetime_limit: int,
+) -> CallAllowance:
+    """Two independent ceilings, checked in the order a person would ask about.
+
+    The daily limit exists because a call reaches a stranger's phone: it caps
+    nuisance regardless of what the customer paid. The lifetime cap exists
+    because the daily limit alone would let a free account call forever, one a
+    day, and never convert.
+
+    Being refused does not consume anything — the counts come from calls that
+    were actually placed.
+    """
+    lifetime = free_lifetime_limit if tier is Tier.FREE else None
+
+    if lifetime is not None and calls_ever >= lifetime:
+        return CallAllowance(
+            allowed=False,
+            reason=(
+                f"The free plan includes {lifetime} verification calls in total, "
+                f"and you have used all {calls_ever}. Upgrade to keep calling."
+            ),
+            calls_today=calls_today,
+            calls_ever=calls_ever,
+            daily_limit=daily_limit,
+            lifetime_limit=lifetime,
+        )
+
+    if calls_today >= daily_limit:
+        return CallAllowance(
+            allowed=False,
+            reason=(
+                f"You have already placed {calls_today} of {daily_limit} calls "
+                "allowed in 24 hours. Please try again tomorrow."
+            ),
+            calls_today=calls_today,
+            calls_ever=calls_ever,
+            daily_limit=daily_limit,
+            lifetime_limit=lifetime,
+        )
+
+    return CallAllowance(
+        allowed=True,
+        calls_today=calls_today,
+        calls_ever=calls_ever,
+        daily_limit=daily_limit,
+        lifetime_limit=lifetime,
+    )

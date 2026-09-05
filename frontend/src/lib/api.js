@@ -142,12 +142,24 @@ export const getSubscription = () => request('/api/subscription');
  * @param {string}   params.pastedContent  listing text; skips crawling entirely
  * @param {boolean}  params.autoCall       start calling once ranking finishes
  */
-export const startSearch = ({ prompt, sites = [], pastedContent, autoCall = false }) =>
+export const startSearch = ({
+  prompt,
+  city,
+  localities = [],
+  sites = [],
+  pastedContent,
+  autoCall = false,
+}) =>
   request('/api/search', {
     method: 'POST',
     body: {
       prompt,
       sites,
+      // Sent separately from the prompt on purpose: the portal URL is built
+      // from the city, and leaving that to be inferred from free text is how a
+      // Hyderabad search ended up fetching a Bengaluru page.
+      ...(city ? { city } : {}),
+      ...(localities.length ? { localities } : {}),
       ...(pastedContent ? { pasted_content: pastedContent } : {}),
       auto_call: autoCall,
     },

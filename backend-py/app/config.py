@@ -83,7 +83,19 @@ class Settings(BaseSettings):
     firebase_storage_bucket: str = ""
 
     # --- llm -------------------------------------------------------------
-    llm_provider: Literal["gemini", "openai"] = "gemini"
+    #: Which provider is tried first. "anthropic" falls back to Gemini on
+    #: rate limits and outages; "gemini" skips Anthropic entirely.
+    llm_provider: Literal["anthropic", "gemini", "openai"] = "gemini"
+
+    #: Anthropic. Optional — without a key the failover is simply not armed
+    #: and everything runs on Gemini exactly as before.
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5-20251001"
+
+    #: Fall back to the secondary provider when the primary rate-limits or
+    #: times out. The Gemini free tier allows 20 requests a day, which one
+    #: afternoon of testing exhausts, so this is not a theoretical concern.
+    llm_failover: bool = True
     gemini_api_key: str = ""
     openai_api_key: str = ""
 
@@ -123,6 +135,15 @@ class Settings(BaseSettings):
     # --- calling policy --------------------------------------------------
     max_concurrent_calls: int = 3
     max_calls_per_session: int = 20
+
+    #: Calls one account may place in a rolling 24 hours, whatever the plan.
+    #: A phone call reaches a stranger, so the ceiling is on the account and
+    #: not only on the wallet.
+    max_calls_per_day: int = 1
+
+    #: Total calls a free account may ever place. The daily limit alone
+    #: would let a free account call forever, one a day.
+    free_plan_lifetime_calls: int = 2
     #: Do not dial the same number twice inside this window, across sessions.
     number_cooldown_days: int = 7
     #: TRAI-friendly windows, IST, as ``HH:MM-HH:MM`` comma separated.

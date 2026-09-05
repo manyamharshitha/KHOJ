@@ -129,6 +129,23 @@ async def browser_session() -> AsyncIterator["Browser"]:
             await browser.close()
 
 
+async def _settle(page) -> None:  # type: ignore[no-untyped-def]
+    """Scroll a few screens so lazy-loaded cards render.
+
+    Portals load the first handful of results and fetch the rest on scroll, so
+    reading without scrolling reports a fraction of what a person would see.
+    Failures are swallowed: a page that cannot be scrolled is still worth
+    reading.
+    """
+    try:
+        for _ in range(3):
+            await page.mouse.wheel(0, 4_000)
+            await page.wait_for_timeout(1_200)
+        await page.wait_for_timeout(1_500)
+    except Exception:  # noqa: BLE001 - scrolling is an optimisation, not a step
+        pass
+
+
 async def _read_page(browser: "Browser", site: TargetSite) -> PageResult:
     """Fetch and sanitise one page."""
     url = str(site.url)
@@ -170,6 +187,7 @@ async def _read_page(browser: "Browser", site: TargetSite) -> PageResult:
         except Exception:  # noqa: BLE001 - a busy page is normal, not an error
             await page.wait_for_timeout(2_000)
 
+        await _settle(page)
         html = await page.content()
         final_url = page.url
         http_status = response.status if response else 0
@@ -187,7 +205,7 @@ async def _read_page(browser: "Browser", site: TargetSite) -> PageResult:
     text = sanitise(html)
     lowered = text[:20_000].lower()
 
-    if http_status in (401, 403, 429) or any(m in lowered for m in _BLOCK_MARKERS):
+    if http_status in (401, 403, 406, 429, 451) or any(m in lowered for m in _BLOCK_MARKERS):
         return PageResult(
             site=site,
             status=ListingSourceStatus.BLOCKED,
