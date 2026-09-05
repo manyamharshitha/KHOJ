@@ -13,6 +13,7 @@ import {
   BrandStars,
   BrandMark,
   BrandCenter,
+  BrandGlow,
   BrandGlobe,
   BrandWordmark,
   BrandTagline,
@@ -75,6 +76,7 @@ const Login = () => {
         <BrandStars />
         <BrandMark to="/">khoj</BrandMark>
         <BrandCenter>
+          <BrandGlow />
           <BrandGlobe>
             <Globe />
           </BrandGlobe>
