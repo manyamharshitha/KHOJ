@@ -1,20 +1,4 @@
-"""Answer a customer's question about one listing, from the call itself.
 
-The rule this module exists to enforce: **the answer comes from the transcript
-or it does not come at all.** A model asked "what is the rent?" with a phone
-call in front of it will happily produce a confident number even when nobody
-said one, and a fabricated rent is worse than no answer — the customer plans a
-Saturday around it.
-
-Two mechanisms hold that line:
-
-* ``covered`` is a field the model must fill in, not a sentence we hope it says.
-  A useful answer with ``covered=false`` is a contradiction, and the caller
-  replaces it with the honest one.
-* ``quote`` must appear in the transcript verbatim. If it does not, the answer
-  is discarded rather than shown, because a quote the call never contained means
-  the rest of the answer was invented too.
-"""
 
 from __future__ import annotations
 
@@ -30,27 +14,15 @@ from app.models import Base, CallLog, HonestyReport, Listing
 
 log = logging.getLogger(__name__)
 
-#: What the customer sees when the call genuinely did not establish something.
 NOT_COVERED = "The call didn't cover that."
-
-#: The transcript is the whole context, and a long one costs tokens on every
-#: question. Calls run to roughly sixty turns, so this keeps entire calls intact
-#: while capping a pathological one.
 MAX_TURNS = 120
 
 
 class ListingAnswer(Base):
     """One answer, either about the listing or about Khoj itself."""
-
-    #: Which question was asked. ``platform`` answers are general help and are
-    #: not held to the transcript, because there is no transcript to hold them
-    #: to — the evidence guard applies to ``listing`` answers only.
     intent: Literal["listing", "platform", "locality"] = "listing"
     answer: str = Field(max_length=800)
-    #: Whether the call actually established this. False means say so plainly.
     covered: bool
-    #: The broker's own words supporting the answer. Verified against the
-    #: transcript before the answer is shown.
     quote: str | None = Field(default=None, max_length=400)
 
 
@@ -258,7 +230,7 @@ async def answer_about_listing(
             system=SYSTEM,
             user=user,
             output=ListingAnswer,
-            model=None,  # extraction model; this is reading, not reasoning
+            model=None,  
             temperature=0.0,
         )
     except LLMError as exc:
@@ -267,9 +239,6 @@ async def answer_about_listing(
             answer="I could not check the call just now. Please try again in a moment.",
             covered=False,
         )
-
-    # The evidence guard. A quote that is not in the transcript means the answer
-    # was constructed rather than read, so the whole thing is discarded.
     if result.intent == "listing" and result.covered and not _quote_is_real(
         result.quote, transcript
     ):
@@ -278,9 +247,6 @@ async def answer_about_listing(
             (result.quote or "")[:120],
         )
         return ListingAnswer(answer=NOT_COVERED, covered=False)
-
-    # A model that says "not covered" while filling in a confident answer is
-    # contradicting itself; the honest half wins.
     if result.intent == "listing" and not result.covered:
         return ListingAnswer(answer=NOT_COVERED, covered=False)
 
@@ -298,11 +264,6 @@ def build_context(call: CallLog | None) -> dict[str, Any]:
         "transcript_turns": turns,
         "questions_answered": answered,
     }
-
-
-#: Appended when streaming. The structured path carries `intent` and `covered`
-#: as real fields; prose cannot, so the model is asked to end with one
-#: machine-readable line that is stripped before the text reaches the reader.
 STREAM_SUFFIX = """
 
 ## Output format
@@ -356,8 +317,6 @@ async def stream_about_listing(
     try:
         async for piece in stream_text(system=SYSTEM + STREAM_SUFFIX, user=user):
             buffer += piece
-            # Hold back anything that might be the start of the META line rather
-            # than streaming it and clawing it back a moment later.
             if "META" in piece or buffer.rstrip().endswith("META"):
                 continue
             yield {"delta": piece}
@@ -371,9 +330,6 @@ async def stream_about_listing(
     intent = match.group(1) if match else "listing"
     covered = (match.group(2) == "true") if match else True
     body = _META.sub("", buffer).strip()
-
-    # Only listing answers are held to the transcript; platform help has no
-    # transcript to be held to.
     verified = True
     if intent == "listing" and covered and transcript:
         quoted = re.findall(r'"([^"]{8,})"', body)

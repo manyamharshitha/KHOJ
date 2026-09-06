@@ -1,10 +1,3 @@
-"""Turn a customer's sentence into structured search criteria.
-
-No keyword rules, no regex for "2BHK", no city lookup table. The customer writes
-how she talks and the model reads it — which is the only approach that survives
-"somewhere I can walk to the metro from, and my mother visits so a spare room
-would help".
-"""
 
 from __future__ import annotations
 

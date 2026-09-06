@@ -1,20 +1,3 @@
-"""The site registry, and honest expectations for each one.
-
-``contact_gated`` is the field that matters. NoBroker, 99acres, MagicBricks and
-Housing all keep the owner's phone number behind a login and usually an OTP, and
-they block automated readers. A crawl of those sites can find *listings* — rent,
-locality, photos — but generally not a *number to dial*, which is the thing this
-product needs.
-
-That is recorded here rather than discovered on demo day. Where the pipeline
-works end-to-end is the long tail: a builder's own site, a classifieds page, a
-society noticeboard, or a URL the customer pastes herself.
-
-Managed co-living operators (Zolo, Colive) are a second category that just
-works: the number on their pages is the operator's own central line, not an
-individual owner's, so there is no lead to protect and nothing gates it.
-Measured 2026-09-06 against live city pages for both.
-"""
 
 from __future__ import annotations
 
@@ -33,13 +16,9 @@ class SiteSpec:
     key: str
     name: str
     base: str
-    #: ``{q}`` is the URL-encoded locality or city.
     search_path: str
     contact_gated: bool
     note: str
-    #: True when ``{q}`` is a URL path segment (e.g. ``/pgs-in-{q}``) rather than
-    #: a query-string value, so it needs a lowercase hyphenated slug instead of
-    #: ``quote_plus``.
     path_slug: bool = False
 
     def search_url(self, query: str) -> str:
@@ -127,21 +106,8 @@ SITES: dict[str, SiteSpec] = {
     ),
 }
 
-#: Zolo and Colive first: both are managed co-living operators whose contact
-#: number is the operator's own, not an individual owner's, so nothing gates
-#: it. MagicBricks still renders listings but its numbers need a sign-in, so it
-#: stays selectable rather than default — a search that returns nothing
-#: dialable by default reads as a broken product.
+
 DEFAULT_SITE_KEYS = ["zolo", "colive"]
-
-
-#: Spellings that mean a known portal but are not its key.
-#:
-#: The lookup used to be an exact dict hit on the lowercased input, so
-#: "nobroker" worked and "NoBroker.in", "no broker" and "www.nobroker.in" all
-#: failed with "none of those sites could be resolved" — which reads as a broken
-#: product rather than a typo. Anything a person would reasonably type for a
-#: site we support should reach that site.
 SITE_ALIASES: dict[str, str] = {
     "no broker": "nobroker",
     "nobrokerin": "nobroker",
@@ -175,16 +141,12 @@ def normalise_site_key(raw: str) -> str | None:
     entry = (raw or "").strip().lower()
     if not entry:
         return None
-
-    # A bare domain or a pasted host: strip scheme, www and path.
     entry = entry.removeprefix("https://").removeprefix("http://")
     entry = entry.removeprefix("www.")
     entry = entry.split("/", 1)[0].strip()
 
     if entry in SITES:
         return entry
-
-    # Drop the TLD: "nobroker.in" -> "nobroker", "housing.com" -> "housing".
     stem = entry.split(".", 1)[0].strip()
     if stem in SITES:
         return stem
@@ -192,9 +154,6 @@ def normalise_site_key(raw: str) -> str | None:
     for candidate in (entry, stem):
         if candidate in SITE_ALIASES:
             return SITE_ALIASES[candidate]
-
-    # Last resort: squeeze out spaces, dots and hyphens and try again, so
-    # "magic bricks" and "magic-bricks" both land on "magicbricks".
     squeezed = "".join(ch for ch in entry if ch.isalnum())
     if squeezed in SITES:
         return squeezed
