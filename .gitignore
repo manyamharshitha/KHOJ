@@ -12,3 +12,11 @@ serviceAccountKey.json
 !.env.example
 /node_modules/
 /dist/
+
+# Saved portal login sessions captured by backend-py/scripts/generate_auth.py.
+# These are live credentials, not config: the cookies inside sign you in as
+# yourself until they expire, so a commit hands the account to anyone with repo
+# access. Regenerate rather than share.
+magicbricks_auth.json
+*_auth.json
+*auth_state*.json

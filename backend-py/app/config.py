@@ -132,6 +132,52 @@ class Settings(BaseSettings):
         "KhojBot/0.1 (+https://github.com/manyamharshitha/KHOJ; rental verification)"
     )
 
+    # --- authenticated contact reveal ------------------------------------
+    #: A signed-in session captured by ``scripts/generate_auth.py``. Relative
+    #: paths resolve against the backend root, then the scraping package, then
+    #: the working directory. Absent means the crawler reads anonymously, which
+    #: is the safe default rather than an error.
+    magicbricks_auth_file: str = "magicbricks_auth.json"
+
+    #: How many numbers to actually unlock on one page.
+    #:
+    #: Counted in *successful reveals*, not clicks: portals meter the free tier
+    #: on numbers unlocked, so that is the number worth capping. Three is
+    #: deliberately below what a browsing person would open — the account can
+    #: only place ``max_calls_per_day`` calls anyway, so unlocking more buys
+    #: nothing and spends quota that does not come back.
+    max_contact_reveals: int = 3
+
+    #: How many controls to click while trying to reach that number.
+    #:
+    #: The second ceiling exists because the first one cannot bound the failure
+    #: case. Stopping only at three *successes* means a page where nothing
+    #: succeeds — an expired session, a rate limit, changed markup — never stops
+    #: at all, and clicks every control on the page. That is precisely the
+    #: behaviour the reveal cap is meant to prevent, so the attempts are bounded
+    #: separately.
+    max_contact_attempts: int = 8
+
+    #: Consecutive clicks that reveal nothing before giving up on the page.
+    #:
+    #: Three misses in a row is not bad luck; it is a session that has expired
+    #: or a portal that has started refusing. Continuing past that spends the
+    #: account's credibility on clicks that are already known not to work.
+    max_contact_misses: int = 3
+
+    #: Patience per click. Short deliberately: a control that has not produced a
+    #: number in this long is a gate or a rate limit, not a slow page, and
+    #: waiting longer on twelve cards turns one search into several minutes.
+    contact_reveal_timeout_ms: int = 5_000
+
+    #: Pause between clicks, so a page of reveals does not arrive as a burst.
+    contact_reveal_delay_ms: int = 1_200
+
+    #: Warn when the saved session is older than this. Portal sessions expire
+    #: quietly, and an expired one looks exactly like a portal that changed its
+    #: markup unless the age is reported.
+    auth_state_max_age_days: int = 7
+
     # --- calling policy --------------------------------------------------
     max_concurrent_calls: int = 3
     max_calls_per_session: int = 20
