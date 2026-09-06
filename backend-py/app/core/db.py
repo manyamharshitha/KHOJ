@@ -1,19 +1,3 @@
-"""MongoDB connection lifecycle for Firestore Enterprise edition.
-
-Firestore Enterprise implements the MongoDB wire protocol, so the data layer is
-a MongoDB driver rather than ``firebase-admin``. ``firebase_admin`` is still
-imported elsewhere, but only by :mod:`app.core.auth` to verify Google ID tokens
-— it no longer reads or writes a single document.
-
-The client is created on FastAPI startup and closed on shutdown. That timing is
-load-bearing: ``AsyncIOMotorClient`` binds to the running event loop when it is
-constructed, so building one at import time gives you a client attached to a
-loop that is never the one serving requests, and every query hangs.
-
-Tests never reach a real server. :func:`use_database` swaps in an
-``AsyncMongoMockClient`` database, because the Firebase CLI emulator does not
-implement the MongoDB wire protocol and there is nothing local to point at.
-"""
 
 from __future__ import annotations
 
@@ -51,14 +35,11 @@ def _client_kwargs() -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "maxPoolSize": settings.mongo_max_pool_size,
         "minPoolSize": settings.mongo_min_pool_size,
-        # Driven by config so the health probe, the driver and the docs cannot
-        # drift apart. Defaults are 3s — fast-fail, not the driver's 30s.
         "serverSelectionTimeoutMS": settings.mongo_server_selection_timeout_ms,
         "connectTimeoutMS": settings.mongo_connect_timeout_ms,
         "socketTimeoutMS": settings.mongo_socket_timeout_ms,
         "appname": "khoj-api",
-        # Round-trips UUIDs the same way every other modern driver does, rather
-        # than the legacy Python-only representation.
+
         "uuidRepresentation": "standard",
     }
     uri = (settings.firestore_enterprise_uri or "").lower()
@@ -80,10 +61,6 @@ async def connect() -> AsyncIOMotorDatabase:
         return _db
 
     uri = (settings.firestore_enterprise_uri or "").strip()
-
-    # Checked here rather than left to the driver. ``InvalidURI: Invalid URI
-    # scheme`` does not tell anyone which setting is wrong or where to get a
-    # right one, and this is the first thing that fails on a fresh deploy.
     if not uri or uri == "FILL_ME":
         raise DatabaseNotReady(
             "FIRESTORE_ENTERPRISE_URI is not set. Get the connection string from "
@@ -91,10 +68,6 @@ async def connect() -> AsyncIOMotorDatabase:
             "You will also need a database user, created on that same page."
         )
     if not uri.startswith(("mongodb://", "mongodb+srv://")):
-        # The common paste error, called out by name. Google shows the string as
-        # ``mongodb://<username>:<password>@host/...`` and the placeholder half
-        # is easy to lose on the way to a .env, leaving a value that begins at
-        # the "@" and looks superficially plausible.
         if uri.startswith("@"):
             raise DatabaseNotReady(
                 "FIRESTORE_ENTERPRISE_URI is missing its scheme and credentials. "

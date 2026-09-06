@@ -1,17 +1,3 @@
-"""Subscription tiers and the quota they buy.
-
-Every verified listing costs a real phone call, so the quota is not decoration —
-it is the thing standing between a free account and an unbounded telephony bill.
-It is therefore enforced in two places, deliberately:
-
-* at **ranking**, where the sorted list is clipped to the tier's limit, so a
-  customer is never shown results the plan will not actually verify; and
-* at **dialling**, immediately before each call is placed, because a plan can be
-  downgraded or a quota consumed by another session between those two moments.
-
-Checking only at ranking would let a long-running search outlive the plan that
-authorised it.
-"""
 
 from __future__ import annotations
 
@@ -26,23 +12,19 @@ class Tier(StrEnum):
     PREMIUM = "premium"
 
 
-#: Listings processed *and verified by phone* per plan.
+
 PLAN_LIMITS: dict[str, int] = {
     Tier.FREE: 2,
     Tier.SILVER: 6,
     Tier.GOLD: 15,
     Tier.PREMIUM: 25,
 }
-
-#: Shown in the UI. Not billing logic — no money changes hands in this codebase.
 PLAN_PRICING_INR: dict[str, int] = {
     Tier.FREE: 0,
     Tier.SILVER: 299,
     Tier.GOLD: 699,
     Tier.PREMIUM: 1499,
 }
-
-#: Above this, the customer is pointed at the custom agency flow instead.
 CUSTOM_AGENCY_THRESHOLD = PLAN_LIMITS[Tier.PREMIUM]
 
 DEFAULT_TIER = Tier.FREE

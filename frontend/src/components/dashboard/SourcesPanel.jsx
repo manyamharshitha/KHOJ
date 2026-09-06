@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, CardRow, Badge, Switch, IconButton, TextInput } from './dashboardUI';
-import { defaultSources } from '../../data/listingSources';
+import { defaultSources, findKnownSource } from '../../data/listingSources';
 import { LOCATION_KEY } from '../../data/onboardingQuestions';
 import { useSearchSession } from '../../lib/SearchContext';
 import { addManualListing, callAll as callAllApi } from '../../lib/api';
@@ -105,6 +105,7 @@ const SourcesPanel = ({ onNavigate }) => {
     if (user) void saveCustomSources(next.map((c) => c.url)).catch(() => {});
   };
   const [draft, setDraft] = useState('');
+  const [draftNote, setDraftNote] = useState(null);
   const [prompt, setPrompt] = useState('');
   const { startSearch, adoptSession, callAll, status, isBusy, error, isConfigured } =
     useSearchSession();
@@ -235,6 +236,22 @@ const SourcesPanel = ({ onNavigate }) => {
     e.preventDefault();
     const url = draft.trim();
     if (!url) return;
+
+    // A bare portal name ("nobroker"), not a pasted URL: warn now, rather than
+    // after a search comes back with nothing dialable.
+    if (!/^https?:\/\//.test(url)) {
+      const known = findKnownSource(url);
+      if (known?.contactGated) {
+        setDraftNote(
+          `${known.name} keeps contact numbers behind a login, and we don't have an ` +
+            "agreement with them for that — so it can't be searched automatically yet. " +
+            'Paste a specific listing URL instead, or add the number below if you have it.'
+        );
+        return;
+      }
+    }
+
+    setDraftNote(null);
     // Adding the same site twice would send it two identical calls.
     if (custom.some((c) => c.url === url)) {
       setDraft('');
@@ -286,12 +303,16 @@ const SourcesPanel = ({ onNavigate }) => {
           <TextInput
             placeholder="Paste a listing site URL"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setDraftNote(null);
+            }}
           />
           <Button type="submit" size="sm" arrow={false}>
             Add source
           </Button>
         </AddRow>
+        {draftNote && <FormNote>{draftNote}</FormNote>}
       </Card>
 
       <ConfirmDialog

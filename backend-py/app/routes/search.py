@@ -328,8 +328,8 @@ async def call_all(
         raise HTTPException(
             status_code=409,
             detail=(
-                "No listing has a phone number to dial. The portals keep contact "
-                "details behind a login — paste a listing URL that shows a number."
+                "No listing has a phone number to dial. Paste a listing URL that "
+                "shows a number, or add one by hand."
             ),
         )
 

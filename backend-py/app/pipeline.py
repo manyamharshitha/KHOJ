@@ -197,8 +197,8 @@ async def run_search(session: SearchSession) -> None:
             listings_matched=len(within_plan),
             error=None
             if callable_count
-            else "Listings were found, but none carried a phone number — the portals keep "
-            "contact details behind a login. Paste a listing URL that shows a number.",
+            else "Listings were found, but none carried a phone number. Paste a listing "
+            "URL that shows a number, or add one by hand.",
         )
         log.info(
             "[%s] search done: %d found, %d matched, %d callable",

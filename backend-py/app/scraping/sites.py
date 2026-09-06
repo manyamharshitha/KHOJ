@@ -9,11 +9,17 @@ product needs.
 That is recorded here rather than discovered on demo day. Where the pipeline
 works end-to-end is the long tail: a builder's own site, a classifieds page, a
 society noticeboard, or a URL the customer pastes herself.
+
+Managed co-living operators (Zolo, Colive) are a second category that just
+works: the number on their pages is the operator's own central line, not an
+individual owner's, so there is no lead to protect and nothing gates it.
+Measured 2026-09-06 against live city pages for both.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from urllib.parse import quote_plus
 
@@ -31,8 +37,15 @@ class SiteSpec:
     search_path: str
     contact_gated: bool
     note: str
+    #: True when ``{q}`` is a URL path segment (e.g. ``/pgs-in-{q}``) rather than
+    #: a query-string value, so it needs a lowercase hyphenated slug instead of
+    #: ``quote_plus``.
+    path_slug: bool = False
 
     def search_url(self, query: str) -> str:
+        if self.path_slug:
+            slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")
+            return self.base + self.search_path.format(q=slug)
         return self.base + self.search_path.format(q=quote_plus(query))
 
 
@@ -85,17 +98,41 @@ SITES: dict[str, SiteSpec] = {
         contact_gated=True,
         note="Numbers hidden behind an in-app chat.",
     ),
+    "zolo": SiteSpec(
+        key="zolo",
+        name="Zolo",
+        base="https://zolostays.com",
+        search_path="/pgs-in-{q}",
+        contact_gated=False,
+        note="Managed co-living operator — one central number, shown on every city page, no login.",
+        path_slug=True,
+    ),
+    "colive": SiteSpec(
+        key="colive",
+        name="Colive",
+        base="https://www.colive.com",
+        search_path="/pg-in-{q}",
+        contact_gated=False,
+        note="Managed co-living operator — one central number, shown on every city page, no login.",
+        path_slug=True,
+    ),
+    "stanzaliving": SiteSpec(
+        key="stanzaliving",
+        name="Stanza Living",
+        base="https://www.stanzaliving.com",
+        search_path="/pg-hostel-{q}",
+        contact_gated=True,
+        note="No number on the page — only a 'request a callback' form.",
+        path_slug=True,
+    ),
 }
 
-#: MagicBricks first because it is the only one of the five that actually
-#: renders its listings to an automated reader. Measured 2026-09-06: it returns
-#: ~23k characters and dozens of rupee figures, while NoBroker serves a shell,
-#: 99acres answers 403 and Housing answers 406.
-#:
-#: The others stay selectable — a customer who pastes a specific listing URL
-#: from them still gets it read — but defaulting to sites that cannot be read
-#: makes an empty result look like a broken product.
-DEFAULT_SITE_KEYS = ["magicbricks"]
+#: Zolo and Colive first: both are managed co-living operators whose contact
+#: number is the operator's own, not an individual owner's, so nothing gates
+#: it. MagicBricks still renders listings but its numbers need a sign-in, so it
+#: stays selectable rather than default — a search that returns nothing
+#: dialable by default reads as a broken product.
+DEFAULT_SITE_KEYS = ["zolo", "colive"]
 
 
 #: Spellings that mean a known portal but are not its key.
@@ -120,6 +157,11 @@ SITE_ALIASES: dict[str, str] = {
     "housing com": "housing",
     "olxin": "olx",
     "olx india": "olx",
+    "zolostays": "zolo",
+    "zolo stays": "zolo",
+    "co live": "colive",
+    "stanza living": "stanzaliving",
+    "stanza": "stanzaliving",
 }
 
 

@@ -132,7 +132,9 @@ Field notes:
   broker or consultancy; false when it says owner. Null if it does not say.
 - contact_number: copy digits that appear on the page, exactly. If the page hides
   the number behind "view contact" or a login, leave it null. Never construct a
-  plausible-looking number.
+  plausible-looking number. Some pages (a managed co-living operator's city
+  listing, say) give one central number for the whole page rather than one per
+  listing — if that is the only number present, use it for every listing.
 
 For each listing also judge how well it matches the customer's requirements,
 which are given to you below.

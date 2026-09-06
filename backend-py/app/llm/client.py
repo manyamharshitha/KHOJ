@@ -1,14 +1,3 @@
-"""Provider-agnostic structured LLM calls.
-
-One function, ``complete_json``, which takes a JSON schema and returns a parsed
-object or raises. Gemini and OpenAI both support constrained JSON output, so the
-provider is a configuration detail rather than an architectural commitment.
-
-Clients are constructed lazily. Both SDKs raise when their key is missing, and
-these modules are imported at boot through the routes — building eagerly would
-mean the whole API refuses to start without an LLM key, when extraction is only
-one step of the pipeline.
-"""
 
 from __future__ import annotations
 
@@ -182,30 +171,12 @@ async def complete_json(
     try:
         parsed = json.loads(_strip_fences(raw))
     except json.JSONDecodeError as exc:
-        # Structured output is constrained, not guaranteed. A malformed payload
-        # is retried; if it survives three attempts the caller decides what a
-        # missing result means, which is always "we learned nothing", never a
-        # fabricated default.
         log.warning("llm: unparseable JSON (%d chars): %s", len(raw), raw[:200])
         raise LLMError("model returned malformed JSON") from exc
 
     if not isinstance(parsed, dict):
         raise LLMError(f"model returned {type(parsed).__name__}, expected an object")
     return parsed
-
-
-# --------------------------------------------------------------------------
-# Gemini schema translation
-# --------------------------------------------------------------------------
-
-#: JSON Schema keywords Gemini's OpenAPI 3.0 subset rejects outright.
-#:
-#: ``additionalProperties`` is the one that bites first: every model here
-#: inherits ``Base``, which sets ``extra="forbid"``, and Pydantic renders that
-#: as ``"additionalProperties": false``. The API answers with
-#: ``Unknown name "additional_properties"`` and the whole extraction returns
-#: nulls. Passing the Pydantic class straight to ``response_schema`` does not
-#: help — the SDK derives the same schema and emits the same key.
 _GEMINI_UNSUPPORTED = frozenset(
     {
         "additionalProperties",
@@ -249,8 +220,6 @@ def _inline_schema(node: Any, defs: dict[str, Any], seen: frozenset[str]) -> Any
     if "$ref" in node:
         name = node["$ref"].rsplit("/", 1)[-1]
         if name in seen:
-            # A cycle. Gemini cannot express one, and a permissive string beats
-            # either infinite recursion or a schema it will reject.
             return {"type": "string"}
         return _inline_schema(defs.get(name, {}), defs, seen | {name})
 
@@ -263,9 +232,6 @@ def _inline_schema(node: Any, defs: dict[str, Any], seen: frozenset[str]) -> Any
             if isinstance(resolved, dict):
                 if nullable:
                     resolved["nullable"] = True
-                # The description sits on the union, not the variant, so it
-                # would be lost in the collapse — and it is the only hint the
-                # model gets about what the field means.
                 if "description" in node:
                     resolved.setdefault("description", node["description"])
             return resolved
@@ -371,8 +337,6 @@ async def stream_text(
     ):
         yield piece
     return
-
-    # unreachable; kept so the original single-provider path stays readable
     from google.genai import types
 
     chosen = model or settings.extraction_model
@@ -383,10 +347,6 @@ async def stream_text(
             system_instruction=system,
             temperature=temperature,
             max_output_tokens=max_tokens,
-            # Automatic function calling on a raw generation stream makes
-            # the SDK warn and can stall the iterator waiting on a tool
-            # round-trip that is never coming. No tools are declared here,
-            # so it is turned off rather than left to warn on every chunk.
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
                 disable=True
             ),
@@ -397,10 +357,6 @@ async def stream_text(
         if text:
             yield text
 
-
-# --------------------------------------------------------------------------
-# unified streaming with failover
-# --------------------------------------------------------------------------
 
 
 async def _anthropic_stream(

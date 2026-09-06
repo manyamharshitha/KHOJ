@@ -1,15 +1,4 @@
-"""Admin notifications for custom agency leads.
 
-Two channels, both optional and tried independently: a Slack/Discord-style
-webhook, and transactional email through Resend. Whichever is configured fires;
-if both are, both fire; if neither is, the lead is still stored and the miss is
-logged loudly.
-
-A notification failure never fails the request. Someone who has just typed their
-email into a "contact us" box should see it accepted — the lead is already
-durable in Firestore, and a dropped webhook is an operations problem, not their
-problem.
-"""
 
 from __future__ import annotations
 
@@ -29,7 +18,7 @@ _TIMEOUT = 10.0
 class DispatchResult:
     """Which channels actually delivered."""
 
-    webhook: bool | None = None  # None = not configured
+    webhook: bool | None = None  
     email: bool | None = None
 
     @property
@@ -133,7 +122,6 @@ async def notify_custom_agency_lead(
     )
 
     if not result.configured:
-        # Loud, because a lead capture nobody is told about is a lead lost.
         log.warning(
             "notify: %s — but no channel is configured. Set "
             "ADMIN_NOTIFICATION_WEBHOOK_URL or RESEND_API_KEY + ADMIN_NOTIFICATION_EMAIL.",
