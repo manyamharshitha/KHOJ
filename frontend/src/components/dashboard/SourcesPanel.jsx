@@ -63,13 +63,6 @@ const CloseIcon = () => (
   </svg>
 );
 
-const SearchForm = styled.form`
-  display: flex;
-  gap: 0.6rem;
-  align-items: center;
-  flex-wrap: wrap;
-`;
-
 /**
  * The questions already answered in onboarding/Questions, one clause per
  * answer — nobody should have to retype what they just spent ten questions
@@ -135,19 +128,16 @@ const SourcesPanel = ({ onNavigate }) => {
   const [pendingCall, setPendingCall] = useState(null);
   const [callState, setCallState] = useState({ busy: false, error: null });
 
-  const submitManual = async (e) => {
-    e.preventDefault();
-    if (!manualPhone.trim()) {
-      setManualState({ status: 'error', message: 'A phone number is needed — that is what gets called.' });
-      return;
-    }
+  const submitManual = async () => {
     setManualState({ status: 'saving', message: null });
     try {
       const notes = buildPromptFromAnswers();
       const res = await addManualListing({
         contact_number: manualPhone.trim(),
         notes: notes || undefined,
-        custom_questions: answeredClauses(),
+        // The backend caps custom_questions at 8; the rest still reach the
+        // call via `notes`, which has no such limit.
+        custom_questions: answeredClauses().slice(0, 8),
       });
       setManualState({ status: 'idle', message: null });
       setManualPhone('');
@@ -158,7 +148,6 @@ const SourcesPanel = ({ onNavigate }) => {
       setManualState({ status: 'error', message: err?.message || 'Could not add that listing.' });
     }
   };
-
 
   /**
    * Start a real search over the enabled sources.
@@ -199,6 +188,22 @@ const SourcesPanel = ({ onNavigate }) => {
       setPendingCall({ sessionId: id, prompt: text });
     }
   };
+
+  /**
+   * One button, two paths: a typed number is called directly; an empty field
+   * runs the automatic search instead. Two identically-labelled "Search and
+   * call" buttons used to sit on this page doing each of these separately.
+   */
+  const searchAndCall = async (e) => {
+    e.preventDefault();
+    if (manualPhone.trim()) {
+      await submitManual();
+    } else {
+      await runSearch();
+    }
+  };
+
+  const busy = isBusy || manualState.status === 'saving';
 
   /** Place the calls, now that the customer has said yes. */
   const confirmCall = async () => {
@@ -338,65 +343,57 @@ const SourcesPanel = ({ onNavigate }) => {
       <Note>Custom sources are checked the same way as our defaults — no extra setup on your end.</Note>
 
       <PanelHead style={{ marginTop: '2.4rem' }}>
-        <Kicker>Add by hand</Kicker>
-        <Title>Have a number already?</Title>
+        <Kicker>Search and call</Kicker>
+        <Title>Have a number, or search?</Title>
         <Sub>
-          Type in what you know and Khoj will call it. Nothing is read from a website, so this
-          works when a portal hides its numbers behind a login.
+          Type in a number you already have and Khoj calls it directly. Leave it blank and Khoj
+          searches your enabled sources instead, using the questions you've already answered.
         </Sub>
       </PanelHead>
 
       <Card>
-        <form onSubmit={submitManual}>
+        <form onSubmit={searchAndCall}>
           <AddRow as="div">
             <TextInput
-              placeholder="Phone number — 10 digits, or +91…"
+              placeholder="Have a number? Type it — 10 digits, or +91… (optional)"
               value={manualPhone}
               onChange={(e) => setManualPhone(e.target.value)}
               aria-label="Phone number"
             />
-            <Button type="submit" size="sm" arrow={false} disabled={manualState.status === 'saving'}>
-              {manualState.status === 'saving' ? 'Searching…' : 'Search and call'}
+            <Button type="submit" size="sm" arrow={false} disabled={busy || (!manualPhone.trim() && !hasAnswers)}>
+              {busy ? 'Searching…' : 'Search and call'}
             </Button>
           </AddRow>
+
           {manualState.message && (
             <FormNote $error={manualState.status === 'error'}>{manualState.message}</FormNote>
           )}
+          {!manualPhone.trim() && !hasAnswers && (
+            <Note style={{ marginTop: '0.8rem' }}>
+              <button
+                type="button"
+                onClick={() => onNavigate?.('questions')}
+                style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}
+              >
+                Answer a few questions
+              </button>{' '}
+              first, or type a number above.
+            </Note>
+          )}
+          {!isConfigured && (
+            <Note style={{ marginTop: '0.8rem' }}>
+              Not connected to the server yet, so this will not run. Set VITE_API_URL and redeploy.
+            </Note>
+          )}
+          {isBusy && <Note style={{ marginTop: '0.8rem' }}>Status: {status}</Note>}
+          {error && (
+            <Note style={{ marginTop: '0.8rem' }}>
+              {error.isQuotaExhausted
+                ? error.message
+                : `Could not run that search — ${error.message}`}
+            </Note>
+          )}
         </form>
-      </Card>
-
-      <Card style={{ marginTop: '1.4rem' }}>
-        <SearchForm>
-          <Button type="button" size="sm" arrow={false} onClick={runSearch} disabled={isBusy || !hasAnswers}>
-            {isBusy ? 'Searching…' : 'Search and call'}
-          </Button>
-        </SearchForm>
-
-        {!hasAnswers && (
-          <Note style={{ marginTop: '0.8rem' }}>
-            <button
-              type="button"
-              onClick={() => onNavigate?.('questions')}
-              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}
-            >
-              Answer a few questions
-            </button>{' '}
-            first — that's what Khoj searches and calls on.
-          </Note>
-        )}
-        {!isConfigured && (
-          <Note style={{ marginTop: '0.8rem' }}>
-            Not connected to the server yet, so this will not run. Set VITE_API_URL and redeploy.
-          </Note>
-        )}
-        {isBusy && <Note style={{ marginTop: '0.8rem' }}>Status: {status}</Note>}
-        {error && (
-          <Note style={{ marginTop: '0.8rem' }}>
-            {error.isQuotaExhausted
-              ? error.message
-              : `Could not run that search — ${error.message}`}
-          </Note>
-        )}
       </Card>
     </div>
   );
