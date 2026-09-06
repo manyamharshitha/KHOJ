@@ -1,21 +1,3 @@
-"""Compare the advert against the phone call, and extract the Q&A record.
-
-Two outputs from one pass over the transcript:
-
-* the **Q&A pairs** the customer is entitled to see — exactly what her agent
-  asked and exactly what came back;
-* an **honesty report** naming every place the spoken answers and the advert
-  disagree.
-
-What this does *not* do is establish that a flat exists. Nobody can, over the
-phone. It scores how well the owner's own answers hold together against what was
-advertised, and every finding carries their words so the customer can judge for
-herself.
-
-The same evidence guard used everywhere else applies: a quote that is not
-literally in the transcript is stripped, and a finding that depended on it is
-dropped. The model cannot invent a damning sentence nobody said.
-"""
 
 from __future__ import annotations
 
@@ -275,8 +257,6 @@ async def evaluate_call(
     for item in raw.listing_discrepancies:
         quote = _guard(item.quote, owner_text)
         if item.quote and not quote:
-            # A discrepancy is an accusation. Without the words that support it,
-            # it does not get made.
             dropped += 1
             continue
         discrepancies.append(

@@ -1,19 +1,4 @@
-"""Turn a scraped page into standardised listings, and score them against the brief.
 
-No CSS selectors, no XPath, no per-site parsers to maintain. The page is
-sanitised to text and the model reads it the way a person would — which is the
-only approach that does not break the week a portal redesigns.
-
-Two guards keep the model honest:
-
-1. **Phone numbers are never taken from the model.** They are found in the page
-   text by pattern and validated to E.164; the model may only associate a number
-   already present with a listing. A hallucinated rent is a blank cell. A
-   hallucinated phone number is a call to a stranger.
-
-2. **Unstated fields stay null.** The prompt says so, and the merge step below
-   discards any contact number the model returns that is not in the page.
-"""
 
 from __future__ import annotations
 
@@ -28,9 +13,6 @@ from app.models import Listing, SearchCriteria
 from app.ids import new_id
 
 log = logging.getLogger(__name__)
-
-#: Runs of digits and separators long enough to be a phone number. Letters break
-#: a run, so "Rent 28,000 maintenance 2000" yields nothing dialable.
 _PHONE_RUN = re.compile(r"\+?\d[\d\s\-().]{7,18}\d")
 
 
@@ -196,14 +178,10 @@ async def extract_listings(
         contact = None
         if item.contact_number:
             candidate = to_e164(item.contact_number)
-            # The guard: a number the model produced that is not in the page is
-            # not dialled. It is dropped.
             if candidate and candidate in page_phones:
                 contact = candidate
             else:
                 dropped_numbers += 1
-
-        # A page with exactly one number and one listing is unambiguous; adopt it.
         if contact is None and len(page_phones) == 1 and len(result.listings) == 1:
             contact = page_phones[0]
 
@@ -212,7 +190,7 @@ async def extract_listings(
                 id=new_id("lst"),
                 session_id=session_id,
                 source_site=source_site,
-                url=item.listing_url or page_url,  # type: ignore[arg-type]
+                url=item.listing_url or page_url, 
                 raw_excerpt=page_text[:8000],
                 title=item.title,
                 locality=item.locality,

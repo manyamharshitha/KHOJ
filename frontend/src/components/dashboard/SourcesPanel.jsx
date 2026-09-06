@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, CardRow, Badge, Switch, IconButton, TextInput } from './dashboardUI';
 import { defaultSources, findKnownSource } from '../../data/listingSources';
-import { LOCATION_KEY } from '../../data/onboardingQuestions';
+import { LOCATION_KEY, ONBOARDING_RESULT_KEY } from '../../data/onboardingQuestions';
 import { useSearchSession } from '../../lib/SearchContext';
 import { addManualListing, callAll as callAllApi } from '../../lib/api';
 import ConfirmDialog from '../ui/ConfirmDialog';
@@ -79,11 +79,34 @@ const SearchForm = styled.form`
   gap: 0.6rem;
   align-items: center;
   flex-wrap: wrap;
-
-  input {
-    flex: 1 1 240px;
-  }
 `;
+
+/**
+ * The prompt `/api/search` parses, built from the questions already answered
+ * in onboarding/Questions — nobody should have to retype a sentence
+ * describing what they just spent ten questions specifying.
+ */
+const buildPromptFromAnswers = () => {
+  let cards = [];
+  try {
+    cards = JSON.parse(window.localStorage.getItem(ONBOARDING_RESULT_KEY) || '[]');
+  } catch {
+    return '';
+  }
+  if (!Array.isArray(cards)) return '';
+
+  const clauses = cards
+    .filter((c) => c.included !== false && c.id !== 'city' && c.id !== 'locality')
+    .map((c) => {
+      const answer = c.selectedOption || c.customOptions?.[0];
+      if (answer) return `${c.text} ${answer}.`;
+      if (c.custom) return `Also ask: ${c.text}.`;
+      return null;
+    })
+    .filter(Boolean);
+
+  return clauses.join(' ');
+};
 
 const SourcesPanel = ({ onNavigate }) => {
   const [sources, setSources] = useState(defaultSources);
@@ -106,9 +129,8 @@ const SourcesPanel = ({ onNavigate }) => {
   };
   const [draft, setDraft] = useState('');
   const [draftNote, setDraftNote] = useState(null);
-  const [prompt, setPrompt] = useState('');
-  const { startSearch, adoptSession, callAll, status, isBusy, error, isConfigured } =
-    useSearchSession();
+  const { startSearch, adoptSession, status, isBusy, error, isConfigured } = useSearchSession();
+  const hasAnswers = Boolean(buildPromptFromAnswers());
 
   // Adding a listing by hand. The path that still works when a portal hides
   // its phone numbers, or the page reader cannot start on the server.
@@ -164,14 +186,13 @@ const SourcesPanel = ({ onNavigate }) => {
   /**
    * Start a real search over the enabled sources.
    *
-   * The customer's sentence is sent as-is — the backend parses it rather than
-   * this form guessing at fields. Custom URLs go first: she chose those, most
-   * likely because she can already see a number on them, and portals keep
-   * contact details behind a login.
+   * The prompt is built from the questions already answered in onboarding —
+   * nobody re-describes what they just spent ten questions specifying. Custom
+   * URLs go first: she chose those, most likely because she can already see a
+   * number on them, and portals keep contact details behind a login.
    */
-  const runSearch = async (e) => {
-    e.preventDefault();
-    const text = prompt.trim();
+  const runSearch = async () => {
+    const text = buildPromptFromAnswers();
     if (!text || isBusy) return;
 
     const sites = [
@@ -379,18 +400,24 @@ const SourcesPanel = ({ onNavigate }) => {
       </Card>
 
       <Card style={{ marginTop: '1.4rem' }}>
-        <SearchForm onSubmit={runSearch}>
-          <TextInput
-            placeholder="What are you looking for? e.g. pet-friendly 2BHK near HSR under 35k"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            aria-label="What you are looking for"
-          />
-          <Button type="submit" size="sm" arrow={false} disabled={isBusy || !prompt.trim()}>
+        <SearchForm>
+          <Button type="button" size="sm" arrow={false} onClick={runSearch} disabled={isBusy || !hasAnswers}>
             {isBusy ? 'Searching…' : 'Search and call'}
           </Button>
         </SearchForm>
 
+        {!hasAnswers && (
+          <Note style={{ marginTop: '0.8rem' }}>
+            <button
+              type="button"
+              onClick={() => onNavigate?.('questions')}
+              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}
+            >
+              Answer a few questions
+            </button>{' '}
+            first — that's what Khoj searches and calls on.
+          </Note>
+        )}
         {!isConfigured && (
           <Note style={{ marginTop: '0.8rem' }}>
             Not connected to the server yet, so this will not run. Set VITE_API_URL and redeploy.
