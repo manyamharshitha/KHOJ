@@ -128,7 +128,9 @@ export function useResults(sessionId) {
     } catch (err) {
       // A failed fetch is an error, not an empty result. Saying so lets the
       // panel offer a retry instead of implying the search found nothing.
-      setError(err);
+      // Normalised to an Error so `error.message` is always reachable: a
+      // rejected promise can carry a string, and a string has no `.message`.
+      setError(err instanceof Error ? err : new Error(String(err)));
       setRuns([]);
       setIsLive(false);
     } finally {

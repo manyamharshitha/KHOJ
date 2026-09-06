@@ -127,7 +127,7 @@ const Overview = ({ onNavigate, profile }) => {
         <Card>
           <EmptyState>
             <SectionTitle>Couldn't load your dashboard</SectionTitle>
-            <p>{error.message || 'The server did not respond.'}</p>
+            <p>{error?.message || 'The server did not respond.'}</p>
           </EmptyState>
         </Card>
       )}

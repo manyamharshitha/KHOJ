@@ -402,7 +402,7 @@ const ResultsPanel = ({ sessionId = null }) => {
         <Card>
           <ResultsEmpty>
             <SectionLabel>Couldn't load results</SectionLabel>
-            <p>{error.message || 'The server did not respond.'}</p>
+            <p>{error?.message || 'The server did not respond.'}</p>
           </ResultsEmpty>
         </Card>
       )}
