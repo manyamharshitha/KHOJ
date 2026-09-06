@@ -9,6 +9,7 @@ import ResultsPanel from '../components/dashboard/ResultsPanel';
 import { ONBOARDING_DONE_KEY, ONBOARDING_RESULT_KEY, TOUR_DONE_KEY } from '../data/onboardingQuestions';
 import { SearchProvider, useSearchSession } from '../lib/SearchContext';
 import { useProfile } from '../lib/useKhoj';
+import ErrorBoundary from '../components/ui/ErrorBoundary';
 
 const PANELS = {
   overview: Overview,
@@ -56,7 +57,10 @@ const DashboardInner = () => {
     setLocalProfile(next);
     if (next?.name && next.name !== displayName) void saveName(next.name);
   };
-  const Panel = PANELS[tab];
+  // An unrecognised tab id would make <Panel /> an undefined element type,
+  // which React reports as "Element type is invalid" and which takes the whole
+  // route down. Fall back to the overview instead of crashing.
+  const Panel = PANELS[tab] ?? Overview;
 
   const completeSetup = (questionCards) => {
     writeFlag(ONBOARDING_DONE_KEY);
@@ -78,12 +82,22 @@ const DashboardInner = () => {
     // profile.name — that falls back to 'Guest' for the navbar, and
     // "Hey Guest" reads worse than "Hey there".
     const firstName = (displayName || '').trim().split(/\s+/)[0] || 'there';
-    return <Onboarding firstName={firstName} onComplete={completeSetup} onSkip={() => completeSetup(null)} />;
+    return (
+      <ErrorBoundary title="Setup could not load">
+        <Onboarding firstName={firstName} onComplete={completeSetup} onSkip={() => completeSetup(null)} />
+      </ErrorBoundary>
+    );
   }
 
   return (
     <DashboardShell active={tab} onChange={setTab} profile={profile} onProfileChange={onProfileChange}>
-      <Panel onNavigate={setTab} profile={profile} sessionId={sessionId} />
+      {/* Per-panel, so a panel that throws leaves the shell and its navigation
+          standing — the customer can move to another tab instead of reloading.
+          Keyed on the tab so leaving mounts a fresh boundary rather than
+          carrying the previous panel's failure across. */}
+      <ErrorBoundary key={tab} title="This panel failed to load">
+        <Panel onNavigate={setTab} profile={profile} sessionId={sessionId} />
+      </ErrorBoundary>
       {phase === 'tour' && <GuidedTour onFinish={completeTour} onSkip={completeTour} />}
     </DashboardShell>
   );

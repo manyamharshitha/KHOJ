@@ -95,11 +95,14 @@ const Overview = ({ onNavigate, profile }) => {
   const firstName = (displayName || profile?.name || '').trim().split(/\s+/)[0] || 'there';
 
   const { data, loading, error } = useDashboard();
-  const stats = data?.stats;
-  const activity = data?.activity ?? [];
+  const stats = data?.stats ?? null;
+  // Array.isArray rather than `?? []`: a payload carrying `activity: {}` or a
+  // string satisfies the nullish check and then throws on `.slice`.
+  const activity = Array.isArray(data?.activity) ? data.activity.filter(Boolean) : [];
   // `is_empty` from the server, not `activity.length` — a search that returned
-  // nothing is still a search, and should not be told to get started.
-  const isEmpty = data ? data.is_empty : false;
+  // nothing is still a search, and should not be told to get started. The count
+  // is a fallback only for a payload that omits the flag entirely.
+  const isEmpty = data ? (data.is_empty ?? activity.length === 0) : false;
 
   return (
     <div>
@@ -152,26 +155,28 @@ const Overview = ({ onNavigate, profile }) => {
       <StatGrid>
         <StatCard>
           <StatLabel>Listings matched</StatLabel>
-          <StatNum>{stats ? stats.listings_matched : '—'}</StatNum>
+          <StatNum>{stats?.listings_matched ?? '—'}</StatNum>
         </StatCard>
         <StatCard>
           <StatLabel>Calls completed</StatLabel>
-          <StatNum>{stats ? stats.calls_completed : '—'}</StatNum>
+          <StatNum>{stats?.calls_completed ?? '—'}</StatNum>
         </StatCard>
         <StatCard>
           <StatLabel>Avg. questions hit</StatLabel>
           {/* An em dash until a call has completed: "0/0" looks like a failure
               rather than an absence. */}
           <StatNum>
-            {stats && stats.avg_questions_total > 0
-              ? `${stats.avg_questions_hit}/${stats.avg_questions_total}`
+            {stats?.avg_questions_total > 0
+              ? `${stats.avg_questions_hit ?? 0}/${stats.avg_questions_total}`
               : '—'}
           </StatNum>
         </StatCard>
         <StatCard>
           <StatLabel>Current plan</StatLabel>
           <StatNum style={{ fontSize: '1.4rem', textTransform: 'capitalize' }}>
-            {stats ? stats.tier : '—'}
+            {/* An em dash, not "Free". A plan is a billing fact, and guessing
+                it downward tells a paying customer they are on the free tier. */}
+            {stats?.tier || '—'}
           </StatNum>
         </StatCard>
       </StatGrid>
@@ -187,17 +192,19 @@ const Overview = ({ onNavigate, profile }) => {
 
       <SectionTitle>Recent activity</SectionTitle>
       <Card>
-        {activity.slice(0, 4).map((run) => {
-          const meta = STATUS_META[STATUS_KEY[run.status] ?? 'scheduled'];
+        {activity.slice(0, 4).map((run, i) => {
+          // Two lookups deep, either of which can miss: an unmapped call_status
+          // yields undefined, and `meta.tone` on undefined throws during render.
+          const meta = STATUS_META[STATUS_KEY[run.status] ?? 'scheduled'] ?? STATUS_META.scheduled;
           return (
-            <RunRow key={run.id}>
+            <RunRow key={run.id ?? i}>
               <RunInfo>
                 <strong>{run.address}</strong>
                 <span>{run.source}</span>
               </RunInfo>
               <RunMeta>
                 <span className="score">
-                  {run.match_score}/{run.total_questions}
+                  {run.match_score ?? 0}/{run.total_questions ?? 0}
                 </span>
                 <Badge $tone={meta.tone}>{meta.label}</Badge>
               </RunMeta>

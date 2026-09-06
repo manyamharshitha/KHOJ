@@ -2,10 +2,15 @@
  * React hooks over the backend.
  *
  * Every one of these degrades rather than breaks. If `VITE_API_URL` is unset, or
- * the Render instance is asleep, or the user is signed out, the dashboard falls
- * back to the bundled demo data and says so through `isLive`. A hackathon demo
- * that shows an error card because a free instance was cold is a worse outcome
- * than one that shows sample data with an honest label.
+ * the Render instance is asleep, or the user is signed out, the hook reports an
+ * error and an empty result and the panel says so. It used to substitute bundled
+ * demo data instead, which read as a completed verification on an account that
+ * had never placed a call.
+ *
+ * Two rules hold throughout: a fetch runs inside try/catch/finally so `loading`
+ * is always cleared, and nothing reaches a state setter without its shape being
+ * checked first — a bad payload should surface as an error card, never as an
+ * exception thrown during render.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -13,8 +18,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 
 import { auth, isFirebaseConfigured } from '../firebase';
 import * as api from './api';
-import { toQuota, toRunCards } from './adapters';
-import { callRuns as demoRuns } from '../data/callRuns';
+import { toDashboard, toQuota, toRunCards } from './adapters';
 
 /** True once Vite has an API URL baked in. */
 export const API_CONFIGURED = Boolean(import.meta.env.VITE_API_URL);
@@ -90,28 +94,42 @@ export function useQuota() {
  */
 export function useResults(sessionId) {
   const { user, ready } = useAuthUser();
-  const [runs, setRuns] = useState(demoRuns);
+  const [runs, setRuns] = useState([]);
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
+    // Nothing to show is shown as nothing.
+    //
+    // This used to fall back to a bundled sample set — a Gachibowli flat at
+    // Rs 38,000, "96% likely genuine", a broker email at example.com. On an
+    // account that had never placed a call it read as a completed verification,
+    // which is the single most misleading thing this product could display: the
+    // whole premise is that a number on screen was confirmed by a phone call.
     if (!API_CONFIGURED || !sessionId || !user) {
-      setRuns(demoRuns);
+      setRuns([]);
       setIsLive(false);
+      setError(null);
       return;
     }
     setLoading(true);
     try {
-      const cards = toRunCards(await api.getResults(sessionId));
-      // An empty live result is still live — showing demo data over the top of
-      // it would tell the customer she has results she does not have.
+      const payload = await api.getResults(sessionId);
+      // toRunCards already returns an array for any input; the guard here is
+      // for the day someone changes it and this stops being true.
+      const cards = toRunCards(payload);
+      if (!Array.isArray(cards)) throw new Error('The server returned results in an unexpected format.');
+      // An empty live result is still live — showing samples over the top of it
+      // would tell the customer she has results she does not have.
       setRuns(cards);
       setIsLive(true);
       setError(null);
     } catch (err) {
+      // A failed fetch is an error, not an empty result. Saying so lets the
+      // panel offer a retry instead of implying the search found nothing.
       setError(err);
-      setRuns(demoRuns);
+      setRuns([]);
       setIsLive(false);
     } finally {
       setLoading(false);
@@ -124,6 +142,7 @@ export function useResults(sessionId) {
 
   return { runs, isLive, loading, error, reload: load };
 }
+
 
 /* ---------------------------------------------------------------- search */
 
@@ -350,18 +369,30 @@ export function useDashboard() {
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
+    // No API URL is a build configuration problem, not an empty account. Saying
+    // so beats rendering a grid of em dashes that looks like a real but idle
+    // dashboard — the two used to be indistinguishable on screen.
     if (!API_CONFIGURED) {
+      setData(null);
+      setError(new Error('The API URL is not configured for this build.'));
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
-      setData(await api.getDashboard());
+      const payload = await api.getDashboard();
+      // Verified before it is stored, not after it reaches JSX. A 200 is not a
+      // promise that the body is the object this panel expects.
+      const next = toDashboard(payload);
+      if (!next) throw new Error('The server returned a dashboard in an unexpected format.');
+      setData(next);
       setError(null);
     } catch (err) {
-      setError(err);
+      setError(err instanceof Error ? err : new Error(String(err)));
       setData(null);
     } finally {
+      // In `finally` so a throw between the two setters cannot strand the
+      // panel on its loading state forever.
       setLoading(false);
     }
   }, []);

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { streamAboutListing } from '../../lib/api';
 import styled from 'styled-components';
-import { PanelHead, Kicker, Title, Sub, Badge, TextInput } from './dashboardUI';
+import { PanelHead, Kicker, Title, Sub, Card, Badge, TextInput } from './dashboardUI';
 import { STATUS_META } from '../../data/callRuns';
 import { useResults } from '../../lib/useKhoj';
 import Button from '../ui/Button';
@@ -233,8 +233,39 @@ const SourceNote = styled.p`
   }
 `;
 
+/**
+ * A readable timestamp, or nothing.
+ *
+ * `new Date(null)` is the Unix epoch rather than a blank, so an un-dialled
+ * listing used to be stamped "1 Jan, 5:30 am" — a specific, wrong, and
+ * entirely plausible-looking time for a call that never happened.
+ */
+const formatDate = (value) => {
+  if (!value) return null;
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
+
 const filters = ['All', 'Completed', 'Scheduled', 'No answer', 'Dead'];
 const statusFor = { All: null, Completed: 'completed', Scheduled: 'scheduled', 'No answer': 'no-answer', Dead: 'dead' };
+
+const ResultsEmpty = styled.div`
+  text-align: center;
+  padding: 2.8rem 1.4rem;
+
+  p {
+    color: ${({ theme }) => theme.muted};
+    font-size: 0.9rem;
+    line-height: 1.6;
+    margin: 0.4rem 0 0;
+  }
+`;
 
 const ResultsPanel = ({ sessionId = null }) => {
   const [filter, setFilter] = useState('All');
@@ -243,9 +274,14 @@ const ResultsPanel = ({ sessionId = null }) => {
   const [drafts, setDrafts] = useState({});
   const [pending, setPending] = useState({});
 
-  // Live results when a session is open and the backend is reachable; the
-  // bundled sample set otherwise, labelled as such rather than passed off.
-  const { runs, isLive, loading, error } = useResults(sessionId);
+  // Live results when a session is open and the backend is reachable, and an
+  // empty list otherwise — there is no sample set to fall back to any more.
+  const { runs: rawRuns, isLive, loading, error } = useResults(sessionId);
+
+  // Never trust the shape at the render boundary. One undefined reaching a
+  // `.map` here throws during render, and a throw during render is a white
+  // page: the panel gets no chance to recover from its own failure.
+  const runs = Array.isArray(rawRuns) ? rawRuns.filter(Boolean) : [];
 
   // Open the first card whenever the underlying set changes, not just on mount —
   // otherwise the panel stays collapsed after results arrive.
@@ -256,7 +292,9 @@ const ResultsPanel = ({ sessionId = null }) => {
   const visible = runs
     .filter((r) => !statusFor[filter] || r.status === statusFor[filter])
     .slice()
-    .sort((a, b) => b.matchScore - a.matchScore);
+    // `undefined - undefined` is NaN, and a NaN comparator scrambles the order
+    // silently instead of throwing.
+    .sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
 
   const append = (runId, message) =>
     setThreads((prev) => ({ ...prev, [runId]: [...(prev[runId] || []), message] }));
@@ -345,11 +383,11 @@ const ResultsPanel = ({ sessionId = null }) => {
         <span />
         {loading
           ? 'Loading your results…'
-          : isLive
-            ? 'Live results from your calls.'
-            : error
-              ? 'Showing sample results — could not reach the server.'
-              : 'Showing sample results. Run a search to see your own.'}
+          : error
+            ? 'Could not reach the server.'
+            : isLive
+              ? 'Live results from your calls.'
+              : 'No results yet. Run a search to see your own.'}
       </SourceNote>
 
       <Chips>
@@ -360,9 +398,34 @@ const ResultsPanel = ({ sessionId = null }) => {
         ))}
       </Chips>
 
+      {!loading && error && (
+        <Card>
+          <ResultsEmpty>
+            <SectionLabel>Couldn't load results</SectionLabel>
+            <p>{error.message || 'The server did not respond.'}</p>
+          </ResultsEmpty>
+        </Card>
+      )}
+
+      {!loading && !error && visible.length === 0 && (
+        <Card>
+          <ResultsEmpty>
+            <SectionLabel>Nothing here yet</SectionLabel>
+            <p>No recent activity. Start a search or add a listing to get started.</p>
+          </ResultsEmpty>
+        </Card>
+      )}
+
       {visible.map((run) => {
-        const meta = STATUS_META[run.status];
+        // A status the backend adds later — or one this build has not heard
+        // of — is a missing key, and `meta.tone` on undefined throws. Scheduled
+        // is the honest reading of "known about, nothing has happened yet".
+        const meta = STATUS_META[run.status] ?? STATUS_META.scheduled;
         const open = openId === run.id;
+        const when = formatDate(run.date);
+        const answers = Array.isArray(run.answers) ? run.answers : [];
+        const unmatched = Array.isArray(run.unmatched) ? run.unmatched : [];
+        const thread = Array.isArray(threads[run.id]) ? threads[run.id] : [];
         return (
           <RunCard key={run.id}>
             <RunHead onClick={() => setOpenId(open ? null : run.id)} aria-expanded={open}>
@@ -372,7 +435,7 @@ const ResultsPanel = ({ sessionId = null }) => {
               </RunInfo>
               <RunMeta>
                 <span className="score">
-                  {run.matchScore}/{run.totalQuestions} matched
+                  {run.matchScore ?? 0}/{run.totalQuestions ?? 0} matched
                 </span>
                 <Badge $tone={meta.tone}>{meta.label}</Badge>
                 <Chevron $open={open} viewBox="0 0 24 24" fill="none">
@@ -388,14 +451,7 @@ const ResultsPanel = ({ sessionId = null }) => {
                     <span>
                       Language: <strong>{run.language}</strong>
                     </span>
-                    <span>
-                      {new Date(run.date).toLocaleString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
-                    </span>
+                    {when && <span>{when}</span>}
                     {run.authenticity != null && (
                       <span>
                         <Badge $tone={run.authenticity >= 70 ? 'good' : run.authenticity >= 45 ? 'accent' : 'bad'}>
@@ -405,12 +461,12 @@ const ResultsPanel = ({ sessionId = null }) => {
                     )}
                   </MetaLine>
 
-                  {run.answers.length > 0 ? (
+                  {answers.length > 0 ? (
                     <QA>
-                      {run.answers.map((qa) => (
-                        <div key={qa.q}>
-                          <p className="q">{qa.q}</p>
-                          <p className="a">{qa.a}</p>
+                      {answers.map((qa, i) => (
+                        <div key={qa?.q ?? i}>
+                          <p className="q">{qa?.q}</p>
+                          <p className="a">{qa?.a}</p>
                         </div>
                       ))}
                     </QA>
@@ -420,12 +476,12 @@ const ResultsPanel = ({ sessionId = null }) => {
                     </Empty>
                   )}
 
-                  {run.unmatched && run.unmatched.length > 0 && (
+                  {unmatched.length > 0 && (
                     <>
-                      <SectionLabel>Not specified ({run.unmatched.length})</SectionLabel>
+                      <SectionLabel>Not specified ({unmatched.length})</SectionLabel>
                       <UnmatchedList>
-                        {run.unmatched.map((q) => (
-                          <Badge key={q} $tone="muted">
+                        {unmatched.map((q, i) => (
+                          <Badge key={q ?? i} $tone="muted">
                             {q}
                           </Badge>
                         ))}
@@ -441,12 +497,12 @@ const ResultsPanel = ({ sessionId = null }) => {
                   )}
 
                   <SectionLabel>Ask Khoj about this listing</SectionLabel>
-                  {((threads[run.id] || []).length > 0 || pending[run.id]) && (
+                  {(thread.length > 0 || pending[run.id]) && (
                     <Thread>
-                      {threads[run.id].map((m, i) => (
-                        <Bubble key={i} $me={m.me} $muted={m.muted}>
-                          {m.text}
-                          {m.quote && <Quote>“{m.quote}”</Quote>}
+                      {thread.map((m, i) => (
+                        <Bubble key={i} $me={m?.me} $muted={m?.muted}>
+                          {m?.text}
+                          {m?.quote && <Quote>“{m.quote}”</Quote>}
                         </Bubble>
                       ))}
                       {pending[run.id] && (

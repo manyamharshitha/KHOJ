@@ -72,7 +72,12 @@ function maskPhone(phone) {
  * @param {object} result  a `ListingResult` from GET /api/session/{id}/results
  */
 export function toRunCard(result) {
-  const { listing = {}, call, honesty, total_monthly_cost: total } = result ?? {};
+  // A destructuring default only fires for `undefined`, so `listing: null` from
+  // the server sailed straight through and threw on the first property read
+  // inside addressFor. Check the type, do not assume it.
+  const src = result && typeof result === 'object' ? result : {};
+  const listing = src.listing && typeof src.listing === 'object' ? src.listing : {};
+  const { call, honesty, total_monthly_cost: total } = src;
 
   const answers = (call?.qna_pairs ?? [])
     .filter((p) => p?.question)
@@ -132,7 +137,47 @@ export function toRunCard(result) {
 
 /** A whole results payload → the array the dashboard renders. */
 export function toRunCards(payload) {
-  return (payload?.results ?? []).map(toRunCard);
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+  return results.filter(Boolean).map(toRunCard);
+}
+
+/** A finite number, or zero. NaN and null both render as "NaN" otherwise. */
+const count = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+/**
+ * The dashboard payload, normalised to a shape the panel can render blind.
+ *
+ * A 200 carrying an HTML proxy error page, a null body, or JSON missing
+ * `activity` all used to reach the component untouched, where the first `.map`
+ * or `.slice` threw during render — and a throw during render is a white
+ * page, not an error message.
+ *
+ * `tier` stays null when the server does not say. Defaulting it to "free"
+ * would tell a paying customer they are on the free plan, which is worse than
+ * an em dash.
+ */
+export function toDashboard(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+
+  const raw = payload.stats;
+  const stats =
+    raw && typeof raw === 'object'
+      ? {
+          listings_matched: count(raw.listings_matched),
+          calls_completed: count(raw.calls_completed),
+          avg_questions_hit: count(raw.avg_questions_hit),
+          avg_questions_total: count(raw.avg_questions_total),
+          tier: typeof raw.tier === 'string' && raw.tier ? raw.tier : null,
+        }
+      : null;
+
+  const activity = Array.isArray(payload.activity) ? payload.activity.filter(Boolean) : [];
+
+  return {
+    stats,
+    activity,
+    is_empty: typeof payload.is_empty === 'boolean' ? payload.is_empty : activity.length === 0,
+  };
 }
 
 /** The plan banner: what the tier allows and what is left. */
