@@ -20,3 +20,4 @@ serviceAccountKey.json
 magicbricks_auth.json
 *_auth.json
 *auth_state*.json
+*_auth.meta.json

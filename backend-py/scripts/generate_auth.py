@@ -139,6 +139,28 @@ async def capture(out: Path, timeout_s: int, assume_yes: bool) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         await context.storage_state(path=str(out))
 
+        # A sidecar recording whether a login was actually confirmed.
+        #
+        # Playwright's storage_state format has nowhere to put this, and the
+        # crawler cannot reliably infer it: an anonymous MagicBricks visit
+        # already yields a session cookie, so "has cookies" proves nothing. This
+        # script is the only place that knows, so it writes it down here rather
+        # than leaving the crawler to guess -- guessing is what let a
+        # not-logged-in file be replayed as though it were a login, click three
+        # reveals, unlock nothing, and report the listings as simply gated.
+        meta = out.with_suffix(".meta.json")
+        meta.write_text(
+            json.dumps(
+                {
+                    "login_confirmed": bool(signed_in),
+                    "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "host": "magicbricks.com",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
         # A session file with no cookies is a session file that will not work.
         try:
             saved = json.loads(out.read_text(encoding="utf-8"))
@@ -151,6 +173,7 @@ async def capture(out: Path, timeout_s: int, assume_yes: bool) -> int:
 
         print()
         print(f"Saved {out}")
+        print(f"  login confirmed: {'yes' if signed_in else 'NO'}")
         if cookies >= 0:
             print(f"  {cookies} cookie(s), {origins} origin(s) with local storage")
         print(f"  captured {datetime.now(timezone.utc).isoformat(timespec='seconds')}")

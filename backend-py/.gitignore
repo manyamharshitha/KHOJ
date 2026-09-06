@@ -13,3 +13,4 @@ __pycache__/
 magicbricks_auth.json
 *_auth.json
 *auth_state*.json
+*_auth.meta.json

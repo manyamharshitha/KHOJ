@@ -22,6 +22,7 @@ and off entirely when no session file is present.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -211,6 +212,47 @@ _OVERLAY = "[role='dialog'], [class*='modal'], [class*='popup'], [class*='overla
 _PHONE = re.compile(r"(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}")
 
 
+def _session_is_signed_in(path: Path) -> tuple[bool, str]:
+    """Whether a saved storage_state actually represents a logged-in user.
+
+    Existence is not evidence of a login. An anonymous visit to MagicBricks
+    already sets cookies -- measured 2026-09-06, a browser that had never signed
+    in produced exactly three (``firstInteractionCookie``, ``cookieDtfirstIntr``
+    and an anonymous ``HDSESSIONID``) and no local storage. Replaying that is
+    indistinguishable from replaying nothing, except that the crawler believes
+    it is authenticated, spends its click budget on reveals that cannot work,
+    and reports the result as an ordinary gate.
+
+    The sidecar written by ``scripts/generate_auth.py`` is authoritative when
+    present, because that script is the only thing that ever saw the login
+    happen. The shape check is a fallback for files captured before the sidecar
+    existed.
+    """
+    meta = path.with_suffix(".meta.json")
+    if meta.is_file():
+        try:
+            record = json.loads(meta.read_text(encoding="utf-8"))
+            if record.get("login_confirmed") is True:
+                return True, "login confirmed at capture"
+            return False, "generate_auth.py could not confirm a login when this was saved"
+        except Exception:  # noqa: BLE001 - a damaged sidecar falls through
+            pass
+
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - unreadable is not usable
+        return False, f"could not be read ({exc})"
+
+    cookies = state.get("cookies") or []
+    origins = state.get("origins") or []
+    if len(cookies) <= 3 and not origins:
+        return False, (
+            f"holds only {len(cookies)} cookie(s) and no local storage, which is "
+            "what an anonymous visit looks like"
+        )
+    return True, f"{len(cookies)} cookie(s), {len(origins)} origin(s)"
+
+
 def _auth_state_for(url: str) -> str | None:
     """Path to a saved signed-in session for this URL's host, or ``None``.
 
@@ -242,7 +284,22 @@ def _auth_state_for(url: str) -> str | None:
                 path.name,
                 age_days,
             )
-        log.info("crawler: replaying saved session from %s", path.name)
+        signed_in, reason = _session_is_signed_in(path)
+        if not signed_in:
+            # Deliberately the same outcome as no file at all. Reporting a
+            # not-logged-in session as authenticated is worse than reporting no
+            # session: it sends you looking at selectors and portal markup for
+            # a problem that is entirely on this side of the connection.
+            log.warning(
+                "crawler: %s is not a signed-in session - %s. Reading %s anonymously. "
+                "Re-run scripts/generate_auth.py and complete the OTP login before it saves.",
+                path.name,
+                reason,
+                host,
+            )
+            return None
+
+        log.info("crawler: replaying saved session from %s (%s)", path.name, reason)
         return str(path)
 
     log.info(
