@@ -6,6 +6,9 @@ import Overview from '../components/dashboard/Overview';
 import QuestionsPanel from '../components/dashboard/QuestionsPanel';
 import SourcesPanel from '../components/dashboard/SourcesPanel';
 import ResultsPanel from '../components/dashboard/ResultsPanel';
+import VisitsPanel from '../components/dashboard/VisitsPanel';
+import NegotiationsPanel from '../components/dashboard/NegotiationsPanel';
+import BrokerPanel from '../components/dashboard/BrokerPanel';
 import { ONBOARDING_DONE_KEY, ONBOARDING_RESULT_KEY, TOUR_DONE_KEY } from '../data/onboardingQuestions';
 import { SearchProvider, useSearchSession } from '../lib/SearchContext';
 import { useProfile } from '../lib/useKhoj';
@@ -16,6 +19,9 @@ const PANELS = {
   questions: QuestionsPanel,
   sources: SourcesPanel,
   results: ResultsPanel,
+  verified: VisitsPanel,
+  deposit: NegotiationsPanel,
+  broker: BrokerPanel,
 };
 
 const readFlag = (key) => {

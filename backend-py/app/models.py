@@ -455,6 +455,19 @@ class HonestyReport(Base):
 # --------------------------------------------------------------------------
 
 
+class UserType(StrEnum):
+    """Which side of the transaction an account is on.
+
+    Renter is the default for every existing account and every new signup that
+    does not say otherwise. Defaulting the other way would give people a broker
+    dashboard they never asked for, and broker views expose inbound calls and
+    renter contact details that are not theirs to see.
+    """
+
+    RENTER = "renter"
+    BROKER = "broker"
+
+
 class UserProfile(Base):
     """A signed-in customer and the plan they are on.
 
@@ -466,6 +479,12 @@ class UserProfile(Base):
     email: str = ""
     name: str | None = None
     picture: str | None = None
+
+    #: Renter unless the account says otherwise, including for every account
+    #: that predates this field. Defaulting the other way would hand existing
+    #: customers a broker dashboard showing inbound calls and renter contact
+    #: details that are not theirs to see.
+    user_type: UserType = UserType.RENTER
 
     tier: str = "free"
     listings_limit: int = Field(default=2, ge=0, le=1000)
@@ -626,3 +645,233 @@ class SessionResults(Base):
     #: Ranked but beyond the plan's ceiling, so the customer can see what an
     #: upgrade would buy rather than wondering what was hidden.
     beyond_plan: int = 0
+
+
+# --------------------------------------------------------------------------
+# roles
+# --------------------------------------------------------------------------
+
+
+class BrokerProfile(Base):
+    """The public face of a broker account.
+
+    ``reputation_score`` is deliberately ``None`` until there is something to
+    compute it from. A default of zero reads as "rated badly" and a default of
+    100 reads as "vetted"; a new broker is neither, they are unrated.
+    """
+
+    uid: str
+    business_name: str = Field(min_length=1, max_length=200)
+    contact_name: str | None = Field(default=None, max_length=120)
+    phone: str | None = None
+    email: str | None = None
+    address: str | None = Field(default=None, max_length=400)
+    logo_url: HttpUrl | None = None
+    #: Self-declared. Nothing in this system verifies it against a registry, so
+    #: it must never be rendered as though Khoj had checked it.
+    business_license: str | None = Field(default=None, max_length=120)
+
+    reputation_score: Unit | None = None
+    calls_received: int = Field(default=0, ge=0)
+    visits_completed: int = Field(default=0, ge=0)
+
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+# --------------------------------------------------------------------------
+# site visits - video proof that someone stood at the property
+# --------------------------------------------------------------------------
+
+
+class SiteVisitStatus(StrEnum):
+    """Where a video verification has got to.
+
+    Distinct from :class:`Verification`, which is the record of a phone call.
+    This is the physical claim: somebody was at that address, at that time, with
+    a camera.
+    """
+
+    SCHEDULED = "scheduled"
+    SMS_SENT = "sms_sent"
+    VIDEO_RECEIVED = "video_received"
+    VERIFIED = "verified"
+    GPS_MISMATCH = "gps_mismatch"
+    LATE_SUBMISSION = "late_submission"
+    EXPIRED = "expired"
+    FAILED = "failed"
+
+
+class GeoPoint(Base):
+    """A latitude/longitude pair, range-checked."""
+
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+class SiteVisit(Base):
+    """A scheduled request for live video proof from a property.
+
+    The token is what the broker actually receives, and it is the only thing
+    standing between a text message and an upload endpoint, so it is a secret:
+    long, random, single-purpose, and never returned by any listing read. The
+    document id is not the token — an id that leaks through a URL or a log would
+    otherwise be an upload credential.
+    """
+
+    id: str
+    listing_id: str
+    #: The renter who asked for the visit.
+    requested_by: str
+    broker_phone: str
+
+    scheduled_for: datetime
+    status: SiteVisitStatus = SiteVisitStatus.SCHEDULED
+
+    #: Where the property is, resolved when the visit was scheduled. ``None``
+    #: means the address could not be geocoded, and a visit with no expected
+    #: point can never be distance-checked - which is reported, not guessed at.
+    expected_point: GeoPoint | None = None
+    property_address: str | None = Field(default=None, max_length=400)
+
+    video_url: str | None = None
+    video_bytes: int | None = Field(default=None, ge=0)
+    video_seconds: float | None = Field(default=None, ge=0)
+    captured_point: GeoPoint | None = None
+    captured_at: datetime | None = None
+
+    #: Metres between the expected and captured points. ``None`` when either
+    #: point is missing.
+    distance_m: float | None = Field(default=None, ge=0)
+    #: Set by an operator who accepts a mismatch. GPS indoors is routinely tens
+    #: of metres out, so a mismatch is a flag for a human, not a verdict.
+    override_reason: str | None = Field(default=None, max_length=400)
+
+    sms_sent_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def is_verified(self) -> bool:
+        """Only an explicit pass counts. Everything else is not verified."""
+        return self.status is SiteVisitStatus.VERIFIED
+
+
+# --------------------------------------------------------------------------
+# deposit negotiation
+# --------------------------------------------------------------------------
+
+
+class NegotiationStatus(StrEnum):
+    OPEN = "open"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    WITHDRAWN = "withdrawn"
+
+
+class OfferParty(StrEnum):
+    RENTER = "renter"
+    BROKER = "broker"
+
+
+class NegotiationOffer(Base):
+    """One move in a negotiation, by whichever side made it."""
+
+    party: OfferParty
+    amount: Rupees | None = None
+    message: str = Field(default="", max_length=2000)
+    #: True when the text came from the model rather than being typed. Recorded
+    #: because a person re-reading this thread months later should be able to
+    #: tell which words were theirs.
+    ai_drafted: bool = False
+    sent_at: datetime = Field(default_factory=utcnow)
+
+
+class Negotiation(Base):
+    """A deposit negotiation on one listing."""
+
+    id: str
+    listing_id: str
+    renter_id: str
+    broker_id: str | None = None
+
+    current_deposit: Rupees | None = None
+    desired_deposit: Rupees | None = None
+    reason: str = Field(default="", max_length=2000)
+
+    status: NegotiationStatus = NegotiationStatus.OPEN
+    offers: list[NegotiationOffer] = Field(default_factory=list)
+
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def latest_offer(self) -> NegotiationOffer | None:
+        return self.offers[-1] if self.offers else None
+
+
+# --------------------------------------------------------------------------
+# notifications
+# --------------------------------------------------------------------------
+
+
+class NotificationType(StrEnum):
+    CALL_READY = "call_ready"
+    CALL_INCOMING = "call_incoming"
+    VISIT_SCHEDULED = "visit_scheduled"
+    VISIT_REQUESTED = "visit_requested"
+    VISIT_COMPLETE = "visit_complete"
+    NEGOTIATION_UPDATE = "negotiation_update"
+    MESSAGE_RECEIVED = "message_received"
+    SEARCH_COMPLETE = "search_complete"
+
+
+class Notification(Base):
+    """One thing that happened, addressed to one account."""
+
+    id: str
+    user_id: str
+    type: NotificationType
+    message: str = Field(min_length=1, max_length=500)
+    #: The listing, call, visit or negotiation this is about, so the UI can link
+    #: straight to it instead of dropping the reader on a dashboard.
+    related_id: str | None = None
+    read: bool = False
+    read_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+# --------------------------------------------------------------------------
+# portal API credentials
+# --------------------------------------------------------------------------
+
+
+class PortalCredential(Base):
+    """An API key for a rental portal that offers one.
+
+    Stored for the day a portal actually grants access. As of 2026-09-08 none of
+    99acres, CommonFloor, Housing or MagicBricks operates a public developer
+    programme a key can be obtained from, so nothing in the search path reads
+    this yet - see ``app/scraping``, which uses a browser because that is the
+    only way in.
+
+    The key never leaves the server: reads go through the repository, which
+    returns it masked unless a caller explicitly asks for the secret.
+    """
+
+    site_id: str = Field(min_length=1, max_length=60)
+    api_endpoint: HttpUrl
+    api_key: str = Field(min_length=1, max_length=500)
+    auth_type: str = Field(default="bearer", max_length=30)
+    rate_limit_per_day: int = Field(default=1000, ge=1, le=10_000_000)
+    is_active: bool = True
+
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    def masked(self) -> dict[str, Any]:
+        """The record with the key reduced to a recognisable stub."""
+        body = self.model_dump(mode="json")
+        key = self.api_key
+        body["api_key"] = f"{key[:3]}...{key[-2:]}" if len(key) > 6 else "..."
+        return body

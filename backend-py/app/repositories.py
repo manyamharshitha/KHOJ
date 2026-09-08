@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, TypeVar
 
 from pymongo import ASCENDING, DESCENDING, ReturnDocument, UpdateOne
@@ -38,13 +38,21 @@ from app.core.db import get_db
 from app.ids import new_id
 from app.models import (
     AgencyLead,
+    BrokerProfile,
     CallLog,
     CallStatus,
     HonestyReport,
     Listing,
+    Negotiation,
+    NegotiationOffer,
+    Notification,
+    PortalCredential,
     SearchSession,
     SessionStatus,
+    SiteVisit,
+    SiteVisitStatus,
     UserProfile,
+    UserType,
     Verification,
     as_utc,
     utcnow,
@@ -62,6 +70,12 @@ ANALYSES = "analyses"
 VERIFICATIONS = "verifications"
 AGENCY_LEADS = "agency_leads"
 LOCALITY_CACHE = "locality_cache"
+BROKER_PROFILES = "broker_profiles"
+SITE_VISITS = "site_visits"
+NEGOTIATIONS = "negotiations"
+NOTIFICATIONS = "notifications"
+PORTAL_CREDENTIALS = "portal_credentials"
+VISIT_TOKENS = "visit_tokens"
 
 #: Written by ``Listing.to_document`` for the index and recomputed in memory by
 #: ``rank_listings``. Stripped on read: the model declares it as a property and
@@ -603,3 +617,306 @@ async def count_calls_ever(uid: str) -> int:
     return await get_db()[CALLS].count_documents(
         {"customer_id": uid, "call_status": {"$nin": [CallStatus.BLOCKED.value]}}
     )
+
+
+async def calls_for_customer(uid: str, limit: int = 100) -> list[CallLog]:
+    """Every call this account placed, newest first."""
+    cursor = get_db()[CALLS].find({"customer_id": uid}).sort("created_at", DESCENDING).limit(limit)
+    return [x async for d in cursor if (x := _model(CallLog, d))]
+
+
+async def calls_to_phone(phone_e164: str, limit: int = 100) -> list[CallLog]:
+    """Every call placed *to* one number, newest first.
+
+    This is how a broker sees their own inbound calls. There is no broker id on
+    a call: the number was scraped from a listing long before anyone knew an
+    account belonged to it, so the phone number is the only join that exists.
+    """
+    cursor = (
+        get_db()[CALLS]
+        .find({"phone_dialed": phone_e164})
+        .sort("created_at", DESCENDING)
+        .limit(limit)
+    )
+    return [x async for d in cursor if (x := _model(CallLog, d))]
+
+
+# --------------------------------------------------------------------------
+# roles and broker profiles
+# --------------------------------------------------------------------------
+
+
+async def set_user_type(uid: str, user_type: UserType) -> None:
+    """Move an account between renter and broker."""
+    await get_db()[USERS].update_one(
+        {"_id": uid}, {"$set": {"user_type": user_type.value}}, upsert=True
+    )
+
+
+async def get_user_type(uid: str) -> UserType:
+    """The account's role. Renter when unset, which is every legacy account."""
+    doc = await get_db()[USERS].find_one({"_id": uid}, {"user_type": 1})
+    raw = (doc or {}).get("user_type")
+    try:
+        return UserType(raw)
+    except ValueError:
+        return UserType.RENTER
+
+
+async def save_broker_profile(profile: BrokerProfile) -> str:
+    """Create or replace a broker's business profile. Keyed on the account id."""
+    profile.updated_at = utcnow()
+    _, body = _to_doc(profile, "uid")
+    await get_db()[BROKER_PROFILES].update_one(
+        {"_id": profile.uid}, {"$set": body}, upsert=True
+    )
+    return profile.uid
+
+
+async def get_broker_profile(uid: str) -> BrokerProfile | None:
+    doc = await get_db()[BROKER_PROFILES].find_one({"_id": uid})
+    return _model(BrokerProfile, doc, "uid")
+
+
+async def broker_by_phone(phone_e164: str) -> BrokerProfile | None:
+    """The broker account that claims this number, if any."""
+    doc = await get_db()[BROKER_PROFILES].find_one({"phone": phone_e164})
+    return _model(BrokerProfile, doc, "uid")
+
+
+# --------------------------------------------------------------------------
+# site visits
+# --------------------------------------------------------------------------
+
+
+async def save_site_visit(visit: SiteVisit) -> str:
+    visit.updated_at = utcnow()
+    doc_id, body = _to_doc(visit)
+    await get_db()[SITE_VISITS].update_one({"_id": doc_id}, {"$set": body}, upsert=True)
+    return visit.id
+
+
+async def get_site_visit(visit_id: str) -> SiteVisit | None:
+    doc = await get_db()[SITE_VISITS].find_one({"_id": visit_id})
+    return _model(SiteVisit, doc)
+
+
+async def update_site_visit(visit_id: str, **fields: Any) -> SiteVisit | None:
+    """Patch a visit and return it as it now stands."""
+    fields["updated_at"] = utcnow()
+    doc = await get_db()[SITE_VISITS].find_one_and_update(
+        {"_id": visit_id}, {"$set": fields}, return_document=ReturnDocument.AFTER
+    )
+    return _model(SiteVisit, doc)
+
+
+async def site_visits_for_listing(listing_id: str) -> list[SiteVisit]:
+    cursor = get_db()[SITE_VISITS].find({"listing_id": listing_id}).sort("created_at", DESCENDING)
+    return [x async for d in cursor if (x := _model(SiteVisit, d))]
+
+
+async def site_visits_for_user(uid: str, limit: int = 50) -> list[SiteVisit]:
+    cursor = (
+        get_db()[SITE_VISITS]
+        .find({"requested_by": uid})
+        .sort("created_at", DESCENDING)
+        .limit(limit)
+    )
+    return [x async for d in cursor if (x := _model(SiteVisit, d))]
+
+
+async def site_visits_for_phone(phone_e164: str, limit: int = 50) -> list[SiteVisit]:
+    """A broker's inbound visit requests, joined on the number they were sent to."""
+    cursor = (
+        get_db()[SITE_VISITS]
+        .find({"broker_phone": phone_e164})
+        .sort("created_at", DESCENDING)
+        .limit(limit)
+    )
+    return [x async for d in cursor if (x := _model(SiteVisit, d))]
+
+
+async def issue_visit_token(visit_id: str) -> str:
+    """Mint the upload credential for one visit.
+
+    Kept in its own collection rather than on the visit document, for two
+    reasons. The models forbid unknown fields, so an extra key there would break
+    every read of that collection — but the real one is that a token stored
+    beside the record leaks through every endpoint that returns the record, and
+    this token is the only thing standing between a text message and an upload.
+    """
+    import secrets
+
+    token = secrets.token_urlsafe(32)
+    await get_db()[VISIT_TOKENS].insert_one(
+        {"_id": token, "visit_id": visit_id, "created_at": utcnow()}
+    )
+    return token
+
+
+async def visit_for_token(token: str) -> SiteVisit | None:
+    """The visit a token unlocks, or ``None``."""
+    if not token:
+        return None
+    doc = await get_db()[VISIT_TOKENS].find_one({"_id": token})
+    return await get_site_visit(doc["visit_id"]) if doc else None
+
+
+async def token_for_visit(visit_id: str) -> str | None:
+    """The existing token for a visit, so the SMS can be re-sent."""
+    doc = await get_db()[VISIT_TOKENS].find_one({"visit_id": visit_id})
+    return doc["_id"] if doc else None
+
+
+async def due_site_visits(now: datetime | None = None) -> list[SiteVisit]:
+    """Scheduled visits whose time has arrived and whose SMS has not gone out."""
+    cursor = get_db()[SITE_VISITS].find(
+        {
+            "status": SiteVisitStatus.SCHEDULED.value,
+            "scheduled_for": {"$lte": now or utcnow()},
+        }
+    )
+    return [x async for d in cursor if (x := _model(SiteVisit, d))]
+
+
+# --------------------------------------------------------------------------
+# negotiations
+# --------------------------------------------------------------------------
+
+
+async def save_negotiation(negotiation: Negotiation) -> str:
+    negotiation.updated_at = utcnow()
+    doc_id, body = _to_doc(negotiation)
+    await get_db()[NEGOTIATIONS].update_one({"_id": doc_id}, {"$set": body}, upsert=True)
+    return negotiation.id
+
+
+async def get_negotiation(negotiation_id: str) -> Negotiation | None:
+    doc = await get_db()[NEGOTIATIONS].find_one({"_id": negotiation_id})
+    return _model(Negotiation, doc)
+
+
+async def append_offer(negotiation_id: str, offer: NegotiationOffer) -> Negotiation | None:
+    """Add one move to the thread.
+
+    ``$push`` rather than rewriting the list: two people can be negotiating at
+    once, and a read-modify-write would silently drop whichever offer lost the
+    race - in a record whose whole purpose is being a complete history.
+    """
+    doc = await get_db()[NEGOTIATIONS].find_one_and_update(
+        {"_id": negotiation_id},
+        {
+            "$push": {"offers": offer.to_document()},
+            "$set": {"updated_at": utcnow()},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    return _model(Negotiation, doc)
+
+
+async def negotiations_for_listing(listing_id: str) -> list[Negotiation]:
+    cursor = get_db()[NEGOTIATIONS].find({"listing_id": listing_id}).sort("created_at", DESCENDING)
+    return [x async for d in cursor if (x := _model(Negotiation, d))]
+
+
+async def negotiations_for_user(uid: str, limit: int = 50) -> list[Negotiation]:
+    cursor = (
+        get_db()[NEGOTIATIONS]
+        .find({"$or": [{"renter_id": uid}, {"broker_id": uid}]})
+        .sort("updated_at", DESCENDING)
+        .limit(limit)
+    )
+    return [x async for d in cursor if (x := _model(Negotiation, d))]
+
+
+# --------------------------------------------------------------------------
+# notifications
+# --------------------------------------------------------------------------
+
+
+async def create_notification(notification: Notification) -> str:
+    doc_id, body = _to_doc(notification)
+    await get_db()[NOTIFICATIONS].insert_one({"_id": doc_id, **body})
+    return notification.id
+
+
+async def notifications_for_user(
+    uid: str, *, unread_only: bool = False, limit: int = 50
+) -> list[Notification]:
+    query: dict[str, Any] = {"user_id": uid}
+    if unread_only:
+        query["read"] = False
+    cursor = get_db()[NOTIFICATIONS].find(query).sort("created_at", DESCENDING).limit(limit)
+    return [x async for d in cursor if (x := _model(Notification, d))]
+
+
+async def count_unread(uid: str) -> int:
+    return await get_db()[NOTIFICATIONS].count_documents({"user_id": uid, "read": False})
+
+
+async def mark_notification_read(notification_id: str, uid: str) -> bool:
+    """Mark one notification read. Scoped to its owner.
+
+    The uid is part of the filter, not checked beforehand: without it the
+    endpoint would let any signed-in account clear anyone else's notifications
+    by guessing an id.
+    """
+    result = await get_db()[NOTIFICATIONS].update_one(
+        {"_id": notification_id, "user_id": uid},
+        {"$set": {"read": True, "read_at": utcnow()}},
+    )
+    return result.matched_count > 0
+
+
+async def mark_all_read(uid: str) -> int:
+    result = await get_db()[NOTIFICATIONS].update_many(
+        {"user_id": uid, "read": False}, {"$set": {"read": True, "read_at": utcnow()}}
+    )
+    return result.modified_count
+
+
+# --------------------------------------------------------------------------
+# portal API credentials
+# --------------------------------------------------------------------------
+
+
+async def save_portal_credential(credential: PortalCredential) -> str:
+    credential.updated_at = utcnow()
+    _, body = _to_doc(credential, "site_id")
+    await get_db()[PORTAL_CREDENTIALS].update_one(
+        {"_id": credential.site_id}, {"$set": body}, upsert=True
+    )
+    return credential.site_id
+
+
+async def get_portal_credential(site_id: str) -> PortalCredential | None:
+    doc = await get_db()[PORTAL_CREDENTIALS].find_one({"_id": site_id})
+    return _model(PortalCredential, doc, "site_id")
+
+
+async def list_portal_credentials() -> list[PortalCredential]:
+    cursor = get_db()[PORTAL_CREDENTIALS].find({}).sort("_id", ASCENDING)
+    # "site_id" is this model's id field. Without it _from_doc writes `id`,
+    # which PortalCredential does not declare and extra="forbid" rejects — a
+    # 500 on read for a document that saved perfectly well.
+    return [x async for d in cursor if (x := _model(PortalCredential, d, "site_id"))]
+
+
+async def delete_portal_credential(site_id: str) -> bool:
+    """Remove one credential. True only if it was actually there.
+
+    Existence is established with a read rather than taken from
+    ``deleted_count``. Firestore Enterprise's MongoDB layer answers ``n: 1`` for
+    a delete that matched nothing — measured 2026-09-09 — so trusting the count
+    reports a cheerful "deleted" for a site that was never stored.
+
+    Checked at the same time: update counts on this backend *are* accurate
+    (``matched=0, modified=0`` for a filter that misses), so the quota guard in
+    :func:`consume_quota_atomic` and the ownership filter in
+    :func:`mark_notification_read` are unaffected. Only delete diverges.
+    """
+    existing = await get_db()[PORTAL_CREDENTIALS].find_one({"_id": site_id}, {"_id": 1})
+    if existing is None:
+        return False
+    await get_db()[PORTAL_CREDENTIALS].delete_one({"_id": site_id})
+    return True

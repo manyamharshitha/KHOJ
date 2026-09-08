@@ -2,9 +2,27 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "khoj-backend",
+      "runtimeExecutable": "C:\\Users\\nmanyam\\Downloads\\khoj\\backend-py\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8010"
+      ],
+      "cwd": "backend-py",
+      "port": 8010
+    },
+    {
       "name": "khoj-frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "frontend"
+      ],
       "port": 5173
     }
   ]

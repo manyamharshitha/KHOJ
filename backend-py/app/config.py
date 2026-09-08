@@ -132,6 +132,55 @@ class Settings(BaseSettings):
         "KhojBot/0.1 (+https://github.com/manyamharshitha/KHOJ; rental verification)"
     )
 
+    #: How long POST /api/search may wait for the model to read the prompt.
+    #:
+    #: This call sits in front of the 202 that unblocks the browser, so it is
+    #: bounded rather than allowed to run as long as the model likes. A timeout
+    #: costs the inferred extras, not the search.
+    preference_parse_timeout_s: float = 20.0
+
+    # --- SMS, geocoding and site visits ----------------------------------
+    #: Twilio. Absent means messages are logged and reported as not sent, never
+    #: recorded as sent — a site visit hangs off "the broker was asked at 14:00".
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_from_number: str | None = None
+
+    #: Google Maps, for turning a property address into a point. Absent means a
+    #: visit is recorded as un-checkable rather than as verified.
+    google_maps_api_key: str | None = None
+
+    #: How far the video may be from the address and still pass.
+    #:
+    #: GPS indoors is routinely tens of metres out — concrete, lifts and upper
+    #: floors all degrade it — so this is a triage threshold, not a verdict. A
+    #: visit beyond it is flagged for a person, never auto-failed.
+    site_visit_radius_m: int = 150
+
+    #: How late a video may arrive and still count, in minutes.
+    site_visit_grace_minutes: int = 30
+
+    #: Upload ceiling. Two minutes of phone video is ~20-40 MB; 100 covers a
+    #: high-bitrate camera without letting the endpoint become file storage.
+    site_visit_max_bytes: int = 100 * 1024 * 1024
+
+    #: Where uploaded videos are written. Local disk by default: S3 is the
+    #: production answer but a bucket that does not exist yet must not stop the
+    #: flow from working end to end on a laptop.
+    site_visit_dir: str = "var/site_visits"
+
+    #: Public base URL used to build the link inside the SMS. Must be reachable
+    #: from the broker's phone, so localhost only works in local testing.
+    public_base_url: str = "http://localhost:5173"
+
+    #: Whether this process runs the site-visit scheduler.
+    #:
+    #: Off for a second instance, and off in tests. The loop claims a row by
+    #: moving it out of SCHEDULED before sending, which narrows but does not
+    #: close the window in which two instances both send the same message —
+    #: so today exactly one process should have this on.
+    run_visit_scheduler: bool = True
+
     # --- authenticated contact reveal ------------------------------------
     #: A signed-in session captured by ``scripts/generate_auth.py``. Relative
     #: paths resolve against the backend root, then the scraping package, then

@@ -63,12 +63,33 @@ async function authHeader() {
   }
 }
 
-async function request(path, { method = 'GET', body, signal } = {}) {
+/**
+ * How long any single request may take before it is abandoned.
+ *
+ * `fetch` has no timeout of its own. Without this, a backend that accepts the
+ * connection and then never answers leaves the promise pending forever — which
+ * is exactly how a search got stuck on "Searching… status: starting" with no
+ * error and no way out: POST /api/search parses preferences through the LLM
+ * before it responds, and a rate-limited model turns that into a hang rather
+ * than a failure.
+ *
+ * Sixty seconds is generous on purpose. A cold Render instance genuinely takes
+ * thirty to wake, and timing that out would trade a hang for a false alarm.
+ */
+const REQUEST_TIMEOUT_MS = 60_000;
+
+async function request(path, { method = 'GET', body, signal, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+  // A caller's own signal still wins; this only adds a deadline on top of it.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+
   let response;
   try {
     response = await fetch(`${BASE}${path}`, {
       method,
-      signal,
+      signal: controller.signal,
       headers: {
         ...(body ? { 'Content-Type': 'application/json' } : {}),
         ...(await authHeader()),
@@ -76,11 +97,22 @@ async function request(path, { method = 'GET', body, signal } = {}) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
-    if (err?.name === 'AbortError') throw err;
+    // A caller who aborted deliberately gets their AbortError back untouched;
+    // our own deadline is reported as something a person can act on.
+    if (err?.name === 'AbortError' && signal?.aborted) throw err;
+    if (err?.name === 'AbortError') {
+      throw new ApiError(
+        `The server did not respond within ${Math.round(timeoutMs / 1000)}s. It may be busy or waking up — try again.`,
+        { status: 0, code: 'timeout' },
+      );
+    }
     throw new ApiError(
       'Could not reach the server. It may be starting up — free instances sleep after inactivity.',
       { status: 0 },
     );
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
   }
 
   if (response.status === 204) return null;
@@ -357,3 +389,121 @@ export const getDashboard = () => request('/api/users/dashboard');
 
 /** GET /api/users/profile/{id} — the profile, plan tier and quota. */
 export const getUserProfile = (userId) => request(`/api/users/profile/${userId}`);
+
+/* ------------------------------------------------------------ roles */
+
+/** GET /api/me/role — renter or broker. */
+export const getRole = () => request('/api/me/role');
+
+/** POST /api/me/role — switch sides. Reversible; this is a view, not an identity. */
+export const setRole = (userType) =>
+  request('/api/me/role', { method: 'POST', body: { user_type: userType } });
+
+/** GET /api/broker/profile */
+export const getBrokerProfile = () => request('/api/broker/profile');
+
+/** POST /api/broker/profile — saving one also makes the account a broker. */
+export const saveBrokerProfile = (fields) =>
+  request('/api/broker/profile', { method: 'POST', body: fields });
+
+/** GET /api/dashboard/renter */
+export const getRenterDashboard = () => request('/api/dashboard/renter');
+
+/** GET /api/dashboard/broker */
+export const getBrokerDashboard = () => request('/api/dashboard/broker');
+
+/* ----------------------------------------------------- site visits */
+
+/** POST /api/visits/schedule — book a time. Sends nothing yet. */
+export const scheduleVisit = ({ listingId, scheduledFor, brokerPhone }) =>
+  request('/api/visits/schedule', {
+    method: 'POST',
+    body: {
+      listing_id: listingId,
+      scheduled_for: scheduledFor,
+      ...(brokerPhone ? { broker_phone: brokerPhone } : {}),
+    },
+  });
+
+/** POST /api/visits/{id}/send — text the broker now, rather than waiting for the scheduler. */
+export const sendVisitRequest = (visitId) =>
+  request(`/api/visits/${visitId}/send`, { method: 'POST' });
+
+/** GET /api/visits/mine */
+export const getMyVisits = () => request('/api/visits/mine');
+
+/** GET /api/visits/listing/{id} — including whether any of them passed. */
+export const getListingVisits = (listingId) => request(`/api/visits/listing/${listingId}`);
+
+/** POST /api/visits/{id}/override — accept one the distance check flagged. */
+export const overrideVisit = (visitId, reason) =>
+  request(`/api/visits/${visitId}/override?reason=${encodeURIComponent(reason)}`, {
+    method: 'POST',
+  });
+
+/* --------------------------------------------------- negotiations */
+
+/** POST /api/negotiations/start */
+export const startNegotiation = ({ listingId, currentDeposit, desiredDeposit, reason }) =>
+  request('/api/negotiations/start', {
+    method: 'POST',
+    body: {
+      listing_id: listingId,
+      ...(currentDeposit != null ? { current_deposit: currentDeposit } : {}),
+      ...(desiredDeposit != null ? { desired_deposit: desiredDeposit } : {}),
+      reason: reason ?? '',
+    },
+  });
+
+/** POST /api/negotiations/{id}/drafts — three messages to choose between. Sends nothing. */
+export const getNegotiationDrafts = (negotiationId) =>
+  request(`/api/negotiations/${negotiationId}/drafts`, { method: 'POST' });
+
+/** POST /api/negotiations/{id}/send — record the offer and text it. */
+export const sendNegotiationOffer = (negotiationId, { message, amount, aiDrafted }) =>
+  request(`/api/negotiations/${negotiationId}/send`, {
+    method: 'POST',
+    body: {
+      message,
+      ...(amount != null ? { amount } : {}),
+      ai_drafted: Boolean(aiDrafted),
+    },
+  });
+
+/** POST /api/negotiations/{id}/reply — log what the broker said back. */
+export const logNegotiationReply = (negotiationId, { message, amount }) =>
+  request(`/api/negotiations/${negotiationId}/reply`, {
+    method: 'POST',
+    body: { message, ...(amount != null ? { amount } : {}) },
+  });
+
+/** GET /api/negotiations */
+export const getNegotiations = () => request('/api/negotiations');
+
+/** GET /api/negotiations/{id} */
+export const getNegotiation = (negotiationId) => request(`/api/negotiations/${negotiationId}`);
+
+/* -------------------------------------------------- notifications */
+
+/** GET /api/notifications */
+export const getNotifications = ({ unreadOnly = false } = {}) =>
+  request(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`);
+
+/** POST /api/notifications/{id}/read */
+export const markNotificationRead = (notificationId) =>
+  request(`/api/notifications/${notificationId}/read`, { method: 'POST' });
+
+/** POST /api/notifications/read-all */
+export const markAllNotificationsRead = () =>
+  request('/api/notifications/read-all', { method: 'POST' });
+
+/**
+ * The notification stream URL.
+ *
+ * EventSource cannot send an Authorization header, so this is returned as a URL
+ * for the caller rather than opened here. With AUTH_REQUIRED off it works as
+ * is; with auth on, the token has to travel another way and that is not wired
+ * yet — the bell falls back to polling, which is why `useNotifications` does not
+ * depend on the stream.
+ */
+export const notificationStreamUrl = () => `${BASE}/api/notifications/stream`;

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import ThemeToggle from '../ui/ThemeToggle';
+import NotificationBell from './NotificationBell';
 import ProfileModal from './ProfileModal';
 import { ONBOARDING_DONE_KEY, ONBOARDING_RESULT_KEY, TOUR_DONE_KEY } from '../../data/onboardingQuestions';
 
@@ -169,6 +170,24 @@ const MobileTab = styled.button`
 `;
 
 const icons = {
+  verified: (
+    <svg viewBox="0 0 24 24" fill="none">
+      <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  deposit: (
+    <svg viewBox="0 0 24 24" fill="none">
+      <rect x="3.5" y="6.5" width="17" height="12" rx="2" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="12" cy="12.5" r="2.5" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  ),
+  broker: (
+    <svg viewBox="0 0 24 24" fill="none">
+      <path d="M4 20V9l8-5 8 5v11" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M9.5 20v-5h5v5" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  ),
   overview: (
     <svg viewBox="0 0 24 24" fill="none">
       <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
@@ -207,6 +226,9 @@ export const TABS = [
   { id: 'questions', label: 'Questions' },
   { id: 'sources', label: 'Sources' },
   { id: 'results', label: 'Results' },
+  { id: 'verified', label: 'Verified' },
+  { id: 'deposit', label: 'Deposit' },
+  { id: 'broker', label: 'Broker' },
 ];
 
 const initials = (name) =>
@@ -236,6 +258,7 @@ const DashboardShell = ({ active, onChange, profile, onProfileChange, children }
       <TopBar>
         <Mark to="/">khoj</Mark>
         <TopActions>
+          <NotificationBell />
           <ThemeToggle />
           <LogoutLink to="/" onClick={handleLogout}>
             Log out

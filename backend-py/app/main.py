@@ -7,19 +7,32 @@ Run with::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.core import scheduler
 from app.core.db import DatabaseNotReady, connect, disconnect, get_db
 from app.core.indexes import ensure_indexes
 from app.routes import auth as auth_routes
-from app.routes import chat, leads, listings, search, users
+from app.routes import (
+    admin,
+    brokers,
+    chat,
+    leads,
+    listings,
+    negotiations,
+    notifications,
+    search,
+    users,
+    visits,
+)
 from app.telephony.persona import assert_compliance
 
 logging.basicConfig(
@@ -72,9 +85,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if settings.telephony_provider == "mock":
         log.warning("telephony is MOCK — calls are simulated, nothing is dialled")
 
+    # The site-visit scheduler. Only started when the database is up: with no
+    # storage it would spin uselessly and log a failure every thirty seconds.
+    visit_scheduler: asyncio.Task[None] | None = None
+    if database_ready and settings.run_visit_scheduler:
+        visit_scheduler = asyncio.create_task(scheduler.run_forever())
+
     try:
         yield
     finally:
+        if visit_scheduler is not None:
+            visit_scheduler.cancel()
+            # Awaited rather than abandoned, so shutdown does not race the
+            # cancellation and leave a half-finished write behind.
+            with suppress(asyncio.CancelledError):
+                await visit_scheduler
         await disconnect()
         log.info("khoj-py shutting down")
 
@@ -100,6 +125,11 @@ app.include_router(leads.router)
 app.include_router(chat.router)
 app.include_router(listings.router)
 app.include_router(users.router)
+app.include_router(brokers.router)
+app.include_router(admin.router)
+app.include_router(visits.router)
+app.include_router(negotiations.router)
+app.include_router(notifications.router)
 
 
 @app.get("/", tags=["meta"])

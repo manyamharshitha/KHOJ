@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -15,6 +16,7 @@ from app.models import (
     PASTED_PLACEHOLDER_URL,
     PASTED_SOURCE,
     ListingResult,
+    SearchCriteria,
     SearchRequest,
     SearchResponse,
     SearchSession,
@@ -95,7 +97,32 @@ async def start_search(
     if quota.exhausted:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=quota.message())
 
-    criteria = await parse_preferences(body.prompt)
+    # Bounded, because this response is what unblocks the UI.
+    #
+    # POST /api/search is meant to return 202 in a moment and let the pipeline
+    # run in the background. Parsing preferences is an LLM call, and a
+    # rate-limited or wedged model turns it into an unbounded wait — the browser
+    # sat on "Searching… status: starting" indefinitely, with no error to show,
+    # because the request that would have moved it on never came back.
+    #
+    # Timing out is survivable: the stated city and localities below override
+    # anything parsed anyway, so the search still runs against the right place.
+    # It loses the extras the model would have inferred from the prose, and the
+    # session records that.
+    try:
+        criteria = await asyncio.wait_for(
+            parse_preferences(body.prompt), timeout=settings.preference_parse_timeout_s
+        )
+    except (TimeoutError, asyncio.TimeoutError):
+        log.warning(
+            "search: preference parsing timed out after %.0fs - continuing with the "
+            "stated city and localities only",
+            settings.preference_parse_timeout_s,
+        )
+        criteria = SearchCriteria()
+    except Exception:  # noqa: BLE001 - a parse failure must not sink the search
+        log.exception("search: preference parsing failed - continuing without it")
+        criteria = SearchCriteria()
 
     # What the customer stated overrides what the model guessed — explicit beats
     # inferred. This also keeps a search working when preference parsing fails

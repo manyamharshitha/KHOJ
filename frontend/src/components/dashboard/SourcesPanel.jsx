@@ -5,6 +5,7 @@ import { defaultSources, findKnownSource } from '../../data/listingSources';
 import { LOCATION_KEY, ONBOARDING_RESULT_KEY } from '../../data/onboardingQuestions';
 import { useSearchSession } from '../../lib/SearchContext';
 import { addManualListing, callAll as callAllApi } from '../../lib/api';
+import ListingAddedDialog from './ListingAddedDialog';
 import ConfirmDialog from '../ui/ConfirmDialog';
 import { useProfile } from '../../lib/useKhoj';
 import Button from '../ui/Button';
@@ -143,6 +144,7 @@ const SourcesPanel = ({ onNavigate }) => {
     deposit: '',
   });
   const [manualState, setManualState] = useState({ status: 'idle', message: null });
+  const [added, setAdded] = useState(null);
 
   // A search that found dialable listings, waiting for the go-ahead. Calls
   // are not placed as a side effect of searching: the search is free and
@@ -171,12 +173,17 @@ const SourcesPanel = ({ onNavigate }) => {
         maintenance: num(manual.maintenance),
         deposit: num(manual.deposit),
       });
-      setManualState({
-        status: 'done',
-        message: `Added ${res.contact_number}. It is ready to call from Results.`,
-      });
+      // No inline confirmation: the next step is a decision, and a line of text
+      // under the form is something people scroll past. The dialog asks.
+      setManualState({ status: 'idle', message: null });
       setManual({ contact_number: '', title: '', locality: '', rent: '', maintenance: '', deposit: '' });
       adoptSession?.(res.session_id);
+      setAdded({
+        sessionId: res.session_id,
+        phone: res.contact_number,
+        listingId: res.listing_id,
+        busy: false,
+      });
     } catch (err) {
       setManualState({ status: 'error', message: err?.message || 'Could not add that listing.' });
     }
@@ -240,6 +247,37 @@ const SourcesPanel = ({ onNavigate }) => {
         error: err?.message || 'That call could not be placed.',
       });
     }
+  };
+
+  /**
+   * The two answers to "listing added, now what?".
+   *
+   * Call now dials immediately: the customer has just been told in the dialog
+   * that this rings a real person and spends a verification, so asking a second
+   * time would be nagging rather than care.
+   */
+  const callAddedNow = async () => {
+    if (!added) return;
+    setAdded((prev) => ({ ...prev, busy: true }));
+    try {
+      await callAllApi(added.sessionId, 1);
+      setAdded(null);
+      onNavigate?.('results');
+    } catch (err) {
+      // 403 is a rate limit, 402 an exhausted plan. Both carry a message
+      // written for the customer, so the dialog closes and it is shown against
+      // the form rather than swallowed.
+      setAdded(null);
+      setManualState({
+        status: 'error',
+        message: err?.message || 'That call could not be placed.',
+      });
+    }
+  };
+
+  const askQuestionsFirst = () => {
+    setAdded(null);
+    onNavigate?.('questions');
   };
 
   /** Keep the results, skip the calls. */
@@ -335,6 +373,15 @@ const SourcesPanel = ({ onNavigate }) => {
         </AddRow>
         {draftNote && <FormNote>{draftNote}</FormNote>}
       </Card>
+
+      {added && (
+        <ListingAddedDialog
+          phone={added.phone}
+          busy={added.busy}
+          onCallNow={callAddedNow}
+          onAskQuestions={askQuestionsFirst}
+        />
+      )}
 
       <ConfirmDialog
         open={Boolean(pendingCall)}

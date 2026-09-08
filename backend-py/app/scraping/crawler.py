@@ -196,11 +196,22 @@ _CLICKABLE = (
 _CARD_ANCESTOR = (
     "xpath=ancestor::*["
     "self::li or self::article"
-    " or contains(@class,'card')"
-    " or contains(@class,'srp')"
-    " or contains(@class,'result')"
+    " or ("
+    "(contains(@class,'card') or contains(@class,'srp') or contains(@class,'result'))"
+    # Without these exclusions an action bar named `mb-srp__card__action`
+    # satisfies contains(@class,'card') and is mistaken for the listing. The
+    # wrapper then resolves its card as the <li> while the button inside it
+    # resolves to the action bar, so the two never agree on which card they
+    # belong to.
+    " and not(contains(@class,'action'))"
+    " and not(contains(@class,'btn'))"
+    ")"
     "][1]"
 )
+
+#: Stamped on a card once its reveal has been attempted, so the wrapper and the
+#: button nested inside it are not both clicked.
+_HANDLED_ATTR = "data-khoj-revealed"
 
 #: Whatever a portal calls the thing it opens over the page.
 _OVERLAY = "[role='dialog'], [class*='modal'], [class*='popup'], [class*='overlay']"
@@ -455,9 +466,37 @@ async def _reveal_contacts(page) -> int:  # type: ignore[no-untyped-def]
             has_card = await card.count() > 0
             scope = card if has_card else page.locator("body")
 
+            # One button, two matches.
+            #
+            # Portals wrap the reveal control in an action bar, and
+            # filter(has_text=...) matches any element whose *subtree* carries
+            # the text — so the wrapper and the button inside it both come back.
+            # Measured on nested markup: three real buttons produced six controls
+            # and five clicks for three numbers. Each duplicate is a second
+            # request against a listing already unlocked, which is exactly the
+            # exposure the cap exists to prevent, and it scores as a miss because
+            # the number it finds was already there. Stamping the card makes the
+            # second match a no-op.
+            # closest(), not a comparison of resolved cards: the wrapper and the
+            # button do not necessarily agree on which ancestor is the listing,
+            # so asking "am I inside anything already handled?" is the question
+            # that actually dedupes them. The control is stamped as well as the
+            # card, so this still works when no card ancestor resolves at all.
+            if await control.evaluate(f"el => !!el.closest('[{_HANDLED_ATTR}]')"):
+                continue
+            await control.evaluate(f"el => el.setAttribute('{_HANDLED_ATTR}', '1')")
+            if has_card:
+                await card.evaluate(f"el => el.setAttribute('{_HANDLED_ATTR}', '1')")
+
             before = await _numbers_visible(page, scope)
+            # A page-level baseline as well, for the case where the click
+            # navigates: the detail page has to be diffed against what the whole
+            # page held before, not against one card's numbers, or every other
+            # card's number reads as newly revealed.
+            before_page = set(_PHONE.findall(await _text_of(page.locator("body"), 2_500)))
 
             await control.scroll_into_view_if_needed(timeout=2_000)
+            was_at = page.url
             clicks += 1
             # no_wait_after: the click often opens a modal rather than
             # navigating, and waiting for a navigation that never comes burns
@@ -469,11 +508,42 @@ async def _reveal_contacts(page) -> int:  # type: ignore[no-untyped-def]
             # into the card is unambiguously that card's; one read out of a
             # shared overlay is only this card's if it was not there a moment
             # ago, which is what the diff against `before` establishes.
-            fresh = set(_PHONE.findall(await _text_of(scope, 2_000))) - before
-            if not fresh:
-                fresh = await _overlay_numbers(page) - before
+            # A control that navigates instead of opening a modal leaves every
+            # remaining locator pointing at a page that no longer exists, so the
+            # rest of the loop would throw its way to the miss limit. Read the
+            # number from wherever we landed, then go back.
+            navigated = page.url != was_at
+            if navigated:
+                fresh = (
+                    set(_PHONE.findall(await _text_of(page.locator("body"), 2_500)))
+                    - before_page
+                )
+            else:
+                fresh = set(_PHONE.findall(await _text_of(scope, 2_000))) - before
+                if not fresh:
+                    fresh = await _overlay_numbers(page) - before
 
             await _dismiss_overlay(page)
+
+            if navigated:
+                try:
+                    await page.go_back(wait_until="domcontentloaded", timeout=15_000)
+                    await page.wait_for_timeout(800)
+                    # go_back rebuilds the DOM, which throws the stamp away and
+                    # would let the wrapper duplicate navigate all over again.
+                    if has_card and await card.count():
+                        await card.evaluate(
+                            f"el => el.setAttribute('{_HANDLED_ATTR}', '1')"
+                        )
+                except Exception:  # noqa: BLE001 - cannot get back, so stop cleanly
+                    log.info(
+                        "crawler: could not return from a detail page; stopping with "
+                        "%d reveal(s)",
+                        revealed + (1 if fresh else 0),
+                    )
+                    if fresh:
+                        revealed += 1
+                    break
 
             if not fresh:
                 misses += 1
