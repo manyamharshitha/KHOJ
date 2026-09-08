@@ -1,22 +1,4 @@
-"""Neighbourhood context from public discussion, summarised by Gemini.
 
-The calling pipeline verifies the *property*. This answers the other half of the
-question — what the area is actually like — from people who live there.
-
-Reddit only, through its official OAuth API. The commonly cited trick of
-appending ``.json`` to a search URL no longer works — it answers 403 with an
-HTML page, because unauthenticated API reads were closed off. So this uses the
-documented client-credentials flow with registered credentials, which is the
-supported route rather than a way around a block.
-
-Quora forbids scraping in its terms and is not touched. Portals are left to the
-crawler, which has a different job.
-
-Everything here degrades rather than fails. A rate limit, an outage, or a
-locality nobody has ever posted about all end the same way: no context, said
-plainly. A neighbourhood summary is a nice-to-have next to a verified phone
-call, and it must never be able to fail a search.
-"""
 
 from __future__ import annotations
 
@@ -34,18 +16,10 @@ from app.models import Base
 
 log = logging.getLogger(__name__)
 
-#: The authenticated search endpoint. The unauthenticated one — appending
-#: ".json" to a reddit.com search URL — now answers 403 with an HTML page.
-#: That route was closed off, so OAuth is the only one that still returns data.
+
 REDDIT_SEARCH = "https://oauth.reddit.com/search"
 REDDIT_TOKEN = "https://www.reddit.com/api/v1/access_token"
-
-#: Reddit rejects unfamiliar or absent user agents outright. This identifies the
-#: project honestly rather than impersonating a browser.
 UA = "khoj-locality-context/1.0 (rental verification research; contact via repo)"
-
-#: Cached for the process. Tokens last an hour; fetching one per query would
-#: triple the request count for no benefit.
 _token: tuple[str, float] | None = None
 
 
@@ -74,7 +48,7 @@ async def _access_token() -> str | None:
             )
             response.raise_for_status()
             payload = response.json()
-    except Exception as exc:  # noqa: BLE001 - context is optional, never fatal
+    except Exception as exc:  
         log.warning("reddit: could not get a token (%s)", type(exc).__name__)
         return None
 
@@ -84,8 +58,6 @@ async def _access_token() -> str | None:
     _token = (token, time.monotonic() + float(payload.get("expires_in") or 3600))
     return token
 
-
-#: Enough posts for a pattern, few enough to stay inside a sensible prompt.
 MAX_POSTS = 12
 MAX_CHARS_PER_POST = 900
 
@@ -181,7 +153,7 @@ async def search_reddit(query: str, *, limit: int = MAX_POSTS) -> list[RedditPos
                 return []
             response.raise_for_status()
             payload = response.json()
-    except Exception as exc:  # noqa: BLE001 - context is optional, never fatal
+    except Exception as exc: 
         log.info("reddit: search failed for %r (%s)", query, type(exc).__name__)
         return []
 

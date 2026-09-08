@@ -34,17 +34,6 @@ const Right = styled.div`
   flex: none;
 `;
 
-const FieldGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.6rem;
-  margin-top: 0.9rem;
-
-  @media (max-width: 520px) {
-    grid-template-columns: 1fr;
-  }
-`;
-
 const FormNote = styled.p`
   font-size: 0.78rem;
   color: ${({ theme, $error }) => ($error ? theme.danger ?? '#b3261e' : theme.muted)};
@@ -75,28 +64,22 @@ const CloseIcon = () => (
   </svg>
 );
 
-const SearchForm = styled.form`
-  display: flex;
-  gap: 0.6rem;
-  align-items: center;
-  flex-wrap: wrap;
-`;
-
 /**
- * The prompt `/api/search` parses, built from the questions already answered
- * in onboarding/Questions — nobody should have to retype a sentence
- * describing what they just spent ten questions specifying.
+ * The questions already answered in onboarding/Questions, one clause per
+ * answer — nobody should have to retype what they just spent ten questions
+ * specifying. Shared by the search prompt and the "have a number" call, so
+ * both ask exactly the same things.
  */
-const buildPromptFromAnswers = () => {
+const answeredClauses = () => {
   let cards = [];
   try {
     cards = JSON.parse(window.localStorage.getItem(ONBOARDING_RESULT_KEY) || '[]');
   } catch {
-    return '';
+    return [];
   }
-  if (!Array.isArray(cards)) return '';
+  if (!Array.isArray(cards)) return [];
 
-  const clauses = cards
+  return cards
     .filter((c) => c.included !== false && c.id !== 'city' && c.id !== 'locality')
     .map((c) => {
       const answer = c.selectedOption || c.customOptions?.[0];
@@ -105,9 +88,9 @@ const buildPromptFromAnswers = () => {
       return null;
     })
     .filter(Boolean);
-
-  return clauses.join(' ');
 };
+
+const buildPromptFromAnswers = () => answeredClauses().join(' ');
 
 const SourcesPanel = ({ onNavigate }) => {
   const [sources, setSources] = useState(defaultSources);
@@ -134,50 +117,42 @@ const SourcesPanel = ({ onNavigate }) => {
   const hasAnswers = Boolean(buildPromptFromAnswers());
 
   // Adding a listing by hand. The path that still works when a portal hides
-  // its phone numbers, or the page reader cannot start on the server.
-  const [manual, setManual] = useState({
-    contact_number: '',
-    title: '',
-    locality: '',
-    rent: '',
-    maintenance: '',
-    deposit: '',
-  });
+  // its phone numbers, or the page reader cannot start on the server. Asks
+  // exactly the questions already answered in onboarding — the same ones a
+  // real search would ask, nothing extra to fill in.
+  const [manualPhone, setManualPhone] = useState('');
   const [manualState, setManualState] = useState({ status: 'idle', message: null });
   const [added, setAdded] = useState(null);
 
-  // A search that found dialable listings, waiting for the go-ahead. Calls
-  // are not placed as a side effect of searching: the search is free and
+  // A search (or a manually-added number) that's ready for the go-ahead.
+  // Calls are not placed as a side effect: finding/adding a number is free and
   // reversible, the call is neither.
   const [pendingCall, setPendingCall] = useState(null);
   const [callState, setCallState] = useState({ busy: false, error: null });
 
-  const setField = (k) => (e) => setManual((prev) => ({ ...prev, [k]: e.target.value }));
-
-  const submitManual = async (e) => {
-    e.preventDefault();
-    if (!manual.contact_number.trim()) {
-      setManualState({ status: 'error', message: 'A phone number is needed — that is what gets called.' });
-      return;
-    }
+  const submitManual = async () => {
     setManualState({ status: 'saving', message: null });
     try {
-      // Blank number fields are omitted rather than sent as 0. "Not stated" and
-      // "free" are different claims, and the call is what settles which.
-      const num = (v) => (String(v).trim() === '' ? undefined : Number(v));
+      const notes = buildPromptFromAnswers();
       const res = await addManualListing({
-        contact_number: manual.contact_number.trim(),
-        title: manual.title.trim() || undefined,
-        locality: manual.locality.trim() || undefined,
-        rent: num(manual.rent),
-        maintenance: num(manual.maintenance),
-        deposit: num(manual.deposit),
+        contact_number: manualPhone.trim(),
+        notes: notes || undefined,
+        // The backend caps custom_questions at 8; the rest still reach the
+        // call via `notes`, which has no such limit.
+        custom_questions: answeredClauses().slice(0, 8),
       });
       // No inline confirmation: the next step is a decision, and a line of text
       // under the form is something people scroll past. The dialog asks.
+      //
+      // ListingAddedDialog rather than the pendingCall path this merged with:
+      // both open a modal, but that one offers "call / not now", and the choice
+      // that actually matters here is "call now / set the questions first".
+      // Clearing the single phone field comes from the incoming change, which
+      // replaced the multi-field form this branch was written against.
       setManualState({ status: 'idle', message: null });
-      setManual({ contact_number: '', title: '', locality: '', rent: '', maintenance: '', deposit: '' });
+      setManualPhone('');
       adoptSession?.(res.session_id);
+      setCallState({ busy: false, error: null });
       setAdded({
         sessionId: res.session_id,
         phone: res.contact_number,
@@ -188,7 +163,6 @@ const SourcesPanel = ({ onNavigate }) => {
       setManualState({ status: 'error', message: err?.message || 'Could not add that listing.' });
     }
   };
-
 
   /**
    * Start a real search over the enabled sources.
@@ -229,6 +203,22 @@ const SourcesPanel = ({ onNavigate }) => {
       setPendingCall({ sessionId: id, prompt: text });
     }
   };
+
+  /**
+   * One button, two paths: a typed number is called directly; an empty field
+   * runs the automatic search instead. Two identically-labelled "Search and
+   * call" buttons used to sit on this page doing each of these separately.
+   */
+  const searchAndCall = async (e) => {
+    e.preventDefault();
+    if (manualPhone.trim()) {
+      await submitManual();
+    } else {
+      await runSearch();
+    }
+  };
+
+  const busy = isBusy || manualState.status === 'saving';
 
   /** Place the calls, now that the customer has said yes. */
   const confirmCall = async () => {
@@ -408,76 +398,57 @@ const SourcesPanel = ({ onNavigate }) => {
       <Note>Custom sources are checked the same way as our defaults — no extra setup on your end.</Note>
 
       <PanelHead style={{ marginTop: '2.4rem' }}>
-        <Kicker>Add by hand</Kicker>
-        <Title>Have a number already?</Title>
+        <Kicker>Search and call</Kicker>
+        <Title>Have a number, or search?</Title>
         <Sub>
-          Type in what you know and Khoj will call it. Nothing is read from a website, so this
-          works when a portal hides its numbers behind a login.
+          Type in a number you already have and Khoj calls it directly. Leave it blank and Khoj
+          searches your enabled sources instead, using the questions you've already answered.
         </Sub>
       </PanelHead>
 
       <Card>
-        <form onSubmit={submitManual}>
-          <TextInput
-            placeholder="Phone number — 10 digits, or +91…"
-            value={manual.contact_number}
-            onChange={setField('contact_number')}
-            aria-label="Phone number"
-          />
-          <FieldGrid>
-            <TextInput placeholder="What is it? e.g. 2BHK near the metro" value={manual.title} onChange={setField('title')} aria-label="Title" />
-            <TextInput placeholder="Locality" value={manual.locality} onChange={setField('locality')} aria-label="Locality" />
-            <TextInput placeholder="Rent (₹/month)" inputMode="numeric" value={manual.rent} onChange={setField('rent')} aria-label="Rent" />
-            <TextInput placeholder="Maintenance (₹/month)" inputMode="numeric" value={manual.maintenance} onChange={setField('maintenance')} aria-label="Maintenance" />
-            <TextInput placeholder="Deposit (₹)" inputMode="numeric" value={manual.deposit} onChange={setField('deposit')} aria-label="Deposit" />
-          </FieldGrid>
-          <AddRow as="div" style={{ marginTop: '1rem' }}>
-            <Button type="submit" size="sm" arrow={false} disabled={manualState.status === 'saving'}>
-              {manualState.status === 'saving' ? 'Adding…' : 'Add listing'}
+        <form onSubmit={searchAndCall}>
+          <AddRow as="div">
+            <TextInput
+              placeholder="Have a number? Type it — 10 digits, or +91… (optional)"
+              value={manualPhone}
+              onChange={(e) => setManualPhone(e.target.value)}
+              aria-label="Phone number"
+            />
+            <Button type="submit" size="sm" arrow={false} disabled={busy || (!manualPhone.trim() && !hasAnswers)}>
+              {busy ? 'Searching…' : 'Search and call'}
             </Button>
           </AddRow>
+
           {manualState.message && (
             <FormNote $error={manualState.status === 'error'}>{manualState.message}</FormNote>
           )}
-          <FormNote>
-            Only the phone number is required. Leave a figure blank if the advert never stated it —
-            the call is what settles it, and a blank is not the same claim as zero.
-          </FormNote>
+          {!manualPhone.trim() && !hasAnswers && (
+            <Note style={{ marginTop: '0.8rem' }}>
+              <button
+                type="button"
+                onClick={() => onNavigate?.('questions')}
+                style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}
+              >
+                Answer a few questions
+              </button>{' '}
+              first, or type a number above.
+            </Note>
+          )}
+          {!isConfigured && (
+            <Note style={{ marginTop: '0.8rem' }}>
+              Not connected to the server yet, so this will not run. Set VITE_API_URL and redeploy.
+            </Note>
+          )}
+          {isBusy && <Note style={{ marginTop: '0.8rem' }}>Status: {status}</Note>}
+          {error && (
+            <Note style={{ marginTop: '0.8rem' }}>
+              {error.isQuotaExhausted
+                ? error.message
+                : `Could not run that search — ${error.message}`}
+            </Note>
+          )}
         </form>
-      </Card>
-
-      <Card style={{ marginTop: '1.4rem' }}>
-        <SearchForm>
-          <Button type="button" size="sm" arrow={false} onClick={runSearch} disabled={isBusy || !hasAnswers}>
-            {isBusy ? 'Searching…' : 'Search and call'}
-          </Button>
-        </SearchForm>
-
-        {!hasAnswers && (
-          <Note style={{ marginTop: '0.8rem' }}>
-            <button
-              type="button"
-              onClick={() => onNavigate?.('questions')}
-              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}
-            >
-              Answer a few questions
-            </button>{' '}
-            first — that's what Khoj searches and calls on.
-          </Note>
-        )}
-        {!isConfigured && (
-          <Note style={{ marginTop: '0.8rem' }}>
-            Not connected to the server yet, so this will not run. Set VITE_API_URL and redeploy.
-          </Note>
-        )}
-        {isBusy && <Note style={{ marginTop: '0.8rem' }}>Status: {status}</Note>}
-        {error && (
-          <Note style={{ marginTop: '0.8rem' }}>
-            {error.isQuotaExhausted
-              ? error.message
-              : `Could not run that search — ${error.message}`}
-          </Note>
-        )}
       </Card>
     </div>
   );
