@@ -47,13 +47,53 @@ export async function signInWithEmail(email, password) {
   }
 }
 
+/**
+ * How long to wait for the Google popup before saying something.
+ *
+ * Generous: a person has to pick an account and possibly type a password, and
+ * cutting that short would be worse than saying nothing. This deadline is not
+ * about slow humans — it is about a popup that never renders at all.
+ */
+const POPUP_TIMEOUT_MS = 90_000;
+
 export async function signInWithGoogle() {
   if (!isFirebaseConfigured) return NOT_CONFIGURED;
+
+  // Firebase drives the popup through https://<authDomain>/__/auth/handler.
+  // When that host is unreachable — a firewall, an antivirus web shield, an ISP
+  // or DNS filter blocking Firebase Hosting — the window opens on about:blank
+  // and simply stays there: no navigation, no error, and signInWithPopup never
+  // settles. The person is left staring at a blank rectangle with nothing to
+  // read and nothing to click.
+  //
+  // Racing a deadline does not repair that, and is not meant to. It converts
+  // silence into a sentence that names the blocked host, which is the
+  // difference between "the site is broken" and "something here is blocking
+  // firebaseapp.com".
+  let timer;
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), POPUP_TIMEOUT_MS);
+  });
+
   try {
-    const credential = await signInWithPopup(auth, googleProvider);
-    return { user: credential.user };
+    const outcome = await Promise.race([signInWithPopup(auth, googleProvider), deadline]);
+
+    if (outcome === 'timeout') {
+      const domain = auth?.config?.authDomain ?? 'your Firebase auth domain';
+      return {
+        error:
+          `The Google sign-in window never loaded. Khoj could not reach ${domain}, ` +
+          'which Google sign-in goes through. A firewall, antivirus web shield or ' +
+          'network filter is the usual cause. Signing in with an email and password ' +
+          'uses a different address and should still work.',
+      };
+    }
+
+    return { user: outcome.user };
   } catch (err) {
     return { error: friendlyError(err) };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
