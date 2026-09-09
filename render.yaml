@@ -54,7 +54,21 @@ services:
         value: "3"
       - key: NUMBER_COOLDOWN_DAYS
         value: "7"
+      # Both default to false in app/config.py, which is the correct production
+      # posture: the window keeps us from ringing strangers at odd hours, and
+      # the cooldown stops one broker being called by five customers in a week.
+      #
+      # Declared `sync: false` rather than pinned to "false" here. A literal
+      # `value:` is reasserted by the blueprint on every deploy, so toggling
+      # either one in the Render dashboard appeared to work and was silently
+      # reverted by the next push — which is how a deployed build ended up
+      # unable to dial at all while the same code dialled fine from a laptop
+      # whose .env set both to true.
+      #
+      # Leave them unset in the dashboard for normal operation. Set
+      # BYPASS_CALL_WINDOW=true only for a live test, and remove it after:
+      # it disables the per-number cooldown as well as the hours.
       - key: IGNORE_CALL_WINDOW
-        value: "false"
+        sync: false
       - key: BYPASS_CALL_WINDOW
-        value: "false"
+        sync: false

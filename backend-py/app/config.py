@@ -113,12 +113,19 @@ class Settings(BaseSettings):
     calle_base_url: str = "https://api.heycall-e.com"
     #: HTTP timeout for a single SDK request, not for the call itself.
     #:
-    #: Strict on purpose. This bounds one request — creating the task, or one
-    #: poll — none of which should take seconds. A slack default here is how an
-    #: unreachable API turns into a call row wedged at DIALING rather than a
-    #: failure the customer can read. The length of the *conversation* is
-    #: governed by ``calle_timeout_seconds``, which is measured in minutes.
-    calle_http_timeout: float = 10.0
+    #: Bounds one request — creating the task, or one poll. The length of the
+    #: *conversation* is governed by ``calle_timeout_seconds``, which is
+    #: measured in minutes, and by the ``asyncio.wait_for`` ceiling in the
+    #: dialer; neither of those is this.
+    #:
+    #: Do not tighten this speculatively. It was briefly cut to 10s on the
+    #: theory that a strict bound would stop a row wedging at DIALING, and it
+    #: did the opposite: creating a call is not a trivial request, and every
+    #: dial from the deployed host started failing with "CALL-E API request
+    #: timed out" while the same code worked from a laptop still on the old
+    #: default. The wedge it was meant to prevent is already handled where it
+    #: belongs — a request that hangs is caught by the dialer's own deadline.
+    calle_http_timeout: float = 30.0
     #: How long to wait for a call to reach a terminal state, and how often to
     #: poll while waiting.
     calle_timeout_seconds: float = 600.0

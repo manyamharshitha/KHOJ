@@ -480,9 +480,27 @@ class CalleDialer:
                 ),
             )
         except CalleTimeoutError as exc:
-            log.warning("[%s] CALL-E timed out: %s", call_id, exc)
+            # Say which ceiling was hit and what it was set to. "timed out" on
+            # its own is unactionable: an HTTP request that never came back and
+            # a call that ran past its limit read identically, and the fix for
+            # one is nothing like the fix for the other.
+            log.warning(
+                "[%s] CALL-E timed out (http=%.0fs, call=%.0fs): %s",
+                call_id,
+                settings.calle_http_timeout,
+                settings.calle_timeout_seconds,
+                exc,
+            )
             return CallOutcome(
-                provider_call_id="", status=CallStatus.FAILED, error=f"timed out: {exc}"
+                provider_call_id="",
+                status=CallStatus.FAILED,
+                error=(
+                    f"CALL-E did not respond in time ({exc}). Per-request limit is "
+                    f"{settings.calle_http_timeout:.0f}s and the call limit is "
+                    f"{settings.calle_timeout_seconds:.0f}s. If this happens on every "
+                    "call from a deployed host but not locally, the network path is "
+                    "slower there — raise CALLE_HTTP_TIMEOUT."
+                )[:400],
             )
         except CalleAPIError as exc:
             log.warning("[%s] CALL-E refused the call: %s", call_id, exc)
