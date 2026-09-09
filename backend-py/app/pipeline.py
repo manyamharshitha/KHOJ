@@ -352,6 +352,7 @@ async def _call_one(session: SearchSession, listing: Listing) -> None:
             call_status=CallStatus.DIALING,
             started_at=utcnow(),
         )
+        log.info("[%s] call created with status=%s phone=%s", session.id, call.call_status.value, phone)
 
         if settings.bypass_call_window:
             # Logged at warning level deliberately. Silently ignoring the
