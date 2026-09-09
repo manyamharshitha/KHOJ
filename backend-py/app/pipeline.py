@@ -390,8 +390,6 @@ async def _call_one(session: SearchSession, listing: Listing) -> None:
             log.error("[%s] telephony unavailable: %s", session.id, exc)
             return
 
-        await save_call(call)
-
         task = build_task(listing, session.criteria, criteria_summary(session.criteria))
         outcome = await dialer.verify(
             call_id=call.id, listing=listing, criteria=session.criteria, task=task
