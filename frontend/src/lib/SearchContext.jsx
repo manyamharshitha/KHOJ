@@ -49,7 +49,18 @@ export function SearchProvider({ children }) {
 
   const startSearch = useCallback(
     async (input) => {
-      const id = await search.start(input);
+      // Adopt the id the moment the session exists, before the crawl finishes.
+      // Waiting for `start` to resolve means waiting for the entire search, and
+      // anything reading `sessionId` in the meantime — the results panel, most
+      // of all — has nothing to poll.
+      const id = await search.start({
+        ...input,
+        onStarted: (created) => {
+          setSessionId(created);
+          writeStored(created);
+          input.onStarted?.(created);
+        },
+      });
       if (id) {
         setSessionId(id);
         writeStored(id);

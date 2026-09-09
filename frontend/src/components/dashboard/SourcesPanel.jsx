@@ -201,19 +201,23 @@ const SourcesPanel = ({ onNavigate }) => {
         .filter(Boolean)
         .join(' ');
 
-    const id = await startSearch({ prompt: text, city, localities, sites });
-
-    // Straight to the results. A search finishing used to raise "Place a
-    // verification call?" here, which asked the wrong question at the wrong
-    // moment: the customer had asked to *find* flats and was answered with a
-    // prompt to telephone one, before a single result was on screen. It was
-    // also unanswerable for a listings-only portal, where there is no number to
-    // ring — the only honest reply was "not now".
+    // Move as soon as the session exists, not when the crawl ends.
     //
-    // Calling is a decision about one property, so it is made on that
-    // property's card in the results, where its number and its price are both
-    // visible. See ResultsPanel.
-    if (id) onNavigate?.('results');
+    // `startSearch` does not settle until the whole search has finished, so
+    // navigating on its return value kept the customer on this panel for the
+    // entire crawl — and, when it timed out, forever: the failure path resolves
+    // to null and the navigation never ran at all. The results panel is built
+    // to show a search in progress, so it is the right place to wait.
+    //
+    // Not awaited. The promise still runs, and the panel it lands on is already
+    // polling the same session.
+    void startSearch({
+      prompt: text,
+      city,
+      localities,
+      sites,
+      onStarted: () => onNavigate?.('results'),
+    });
   };
 
   /**

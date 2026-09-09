@@ -5,6 +5,7 @@ import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, Badge, TextInput } from './dashboardUI';
 import { STATUS_META } from '../../data/callRuns';
 import { useResults } from '../../lib/useKhoj';
+import { useSearchSession } from '../../lib/SearchContext';
 import Button from '../ui/Button';
 import ConfirmDialog from '../ui/ConfirmDialog';
 
@@ -263,6 +264,25 @@ const statusFor = {
   Dead: 'dead',
 };
 
+/**
+ * What the backend is doing, in the customer's terms.
+ *
+ * Keyed on `SessionStatus` from the API. Naming the stage matters more than it
+ * looks: a crawl and an extraction take different amounts of time for different
+ * reasons, and "scraping" that sits still for thirty seconds reads as broken,
+ * where "reading the pages" followed by "pulling out the details" reads as
+ * progress.
+ */
+const SEARCH_PROGRESS = {
+  starting: 'Starting the search…',
+  queued: 'Queued…',
+  running: 'Searching your selected sources…',
+  scraping: 'Reading the pages from your selected sources…',
+  extracting: 'Pulling the rent, locality and contact details out of each listing…',
+  ranked: 'Ranking what was found…',
+  calling: 'Calling…',
+};
+
 const CallRow = styled.div`
   display: flex;
   align-items: center;
@@ -314,9 +334,18 @@ const ResultsPanel = ({ sessionId = null }) => {
   const [verifying, setVerifying] = useState(null);
   const [calling, setCalling] = useState({ id: null, error: null });
 
+  // The search that is running right now, if one is. Read from the shared
+  // context rather than a prop, because Sources navigates here the moment the
+  // session is created and the crawl continues for some time afterwards — this
+  // panel is where that wait is actually shown.
+  const { status: searchStatus, isBusy: searching, error: searchError } = useSearchSession();
+
   // Live results when a session is open and the backend is reachable, and an
   // empty list otherwise — there is no sample set to fall back to any more.
-  const { runs: rawRuns, isLive, loading, error, reload } = useResults(sessionId);
+  // `active` keeps it polling while the crawl is still producing listings.
+  const { runs: rawRuns, isLive, loading, error, reload } = useResults(sessionId, {
+    active: searching,
+  });
 
   /** Place the call, now that the customer has said yes to this property. */
   const confirmCall = async () => {
@@ -444,13 +473,15 @@ const ResultsPanel = ({ sessionId = null }) => {
 
       <SourceNote $live={isLive}>
         <span />
-        {loading
-          ? 'Loading your results…'
-          : error
-            ? 'Could not reach the server.'
-            : isLive
-              ? 'Live results from your calls.'
-              : 'No results yet. Run a search to see your own.'}
+        {searching
+          ? SEARCH_PROGRESS[searchStatus] ?? SEARCH_PROGRESS.running
+          : loading
+            ? 'Loading your results…'
+            : error
+              ? 'Could not reach the server.'
+              : isLive
+                ? 'Live results from your search.'
+                : 'No results yet. Run a search to see your own.'}
       </SourceNote>
 
       <Chips>
@@ -470,7 +501,32 @@ const ResultsPanel = ({ sessionId = null }) => {
         </Card>
       )}
 
-      {!loading && !error && visible.length === 0 && (
+      {/* A crawl produces nothing for tens of seconds, and an empty results
+          array during that window is not the same fact as "nothing was found".
+          Reporting the second while the first is true is what made a working
+          search look like a broken one. */}
+      {searching && visible.length === 0 && (
+        <Card>
+          <ResultsEmpty>
+            <SectionLabel>Searching</SectionLabel>
+            <p>
+              {SEARCH_PROGRESS[searchStatus] ?? SEARCH_PROGRESS.running} Listings appear here as
+              they are found — you do not need to wait on this screen.
+            </p>
+          </ResultsEmpty>
+        </Card>
+      )}
+
+      {searchError && !searching && (
+        <Card>
+          <ResultsEmpty>
+            <SectionLabel>That search did not finish</SectionLabel>
+            <p>{searchError?.message || 'The search stopped before it returned anything.'}</p>
+          </ResultsEmpty>
+        </Card>
+      )}
+
+      {!searching && !searchError && !loading && !error && visible.length === 0 && (
         <Card>
           <ResultsEmpty>
             <SectionLabel>Nothing here yet</SectionLabel>

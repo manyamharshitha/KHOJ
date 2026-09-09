@@ -92,8 +92,8 @@ export function useQuota() {
  *
  * @param {string|null} sessionId  omit to show the demo data
  */
-export function useResults(sessionId) {
-  const { user, ready } = useAuthUser();
+export function useResults(sessionId, { active = false } = {}) {
+  const { ready } = useAuthUser();
   const [runs, setRuns] = useState([]);
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -107,7 +107,14 @@ export function useResults(sessionId) {
     // account that had never placed a call it read as a completed verification,
     // which is the single most misleading thing this product could display: the
     // whole premise is that a number on screen was confirmed by a phone call.
-    if (!API_CONFIGURED || !sessionId || !user) {
+    //
+    // Being signed in is deliberately *not* a condition. It used to be, and
+    // that emptied the panel for the entire configuration the product ships in
+    // for demos: with AUTH_REQUIRED off there is no Firebase user, so a search
+    // that had scraped and ranked a dozen flats rendered as nothing at all. The
+    // server decides who may read a session; guessing at it here only produced
+    // a blank screen for people the server would have answered.
+    if (!API_CONFIGURED || !sessionId) {
       setRuns([]);
       setIsLive(false);
       setError(null);
@@ -136,28 +143,32 @@ export function useResults(sessionId) {
     } finally {
       setLoading(false);
     }
-  }, [sessionId, user]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (ready) void load();
   }, [ready, load]);
 
-  // A call is not an instant. It is dialled, answered, talked through and only
-  // then analysed — minutes, during which the row on screen goes DIALING →
-  // IN_PROGRESS → COMPLETED. Fetching once meant the panel showed whichever
-  // state happened to exist at the moment it mounted and then froze there, so a
-  // call that connected and finished still read as "Calling now" until the
-  // customer reloaded the page by hand.
+  // Two things here take time, and both would otherwise be watched by a person
+  // pressing refresh.
   //
-  // Polling stops as soon as nothing is live, so a settled result set costs
-  // nothing.
+  // A crawl runs for tens of seconds before the first listing exists, so a
+  // panel that fetched once on mount showed an empty session and stopped —
+  // which is what "search does nothing" looked like from the outside.
+  //
+  // A call then runs for minutes, its row moving DIALING → IN_PROGRESS →
+  // COMPLETED, so a single fetch froze whichever state happened to exist when
+  // the panel mounted.
+  //
+  // `active` is the caller saying a search is still running. Polling stops as
+  // soon as neither is true, so a settled result set costs nothing.
   const inFlight = runs.some((r) => r.status === 'calling' || r.status === 'scheduled');
 
   useEffect(() => {
-    if (!ready || !inFlight) return undefined;
-    const timer = setInterval(() => void load(), 5000);
+    if (!ready || (!inFlight && !active)) return undefined;
+    const timer = setInterval(() => void load(), 3000);
     return () => clearInterval(timer);
-  }, [ready, inFlight, load]);
+  }, [ready, inFlight, active, load]);
 
   return { runs, isLive, loading, error, reload: load };
 }
@@ -182,7 +193,15 @@ export function useSearch() {
   useEffect(() => () => { cancelled.current = true; }, []);
 
   const start = useCallback(
-    async ({ prompt, city, localities = [], sites = [], pastedContent, autoCall = false }) => {
+    async ({
+      prompt,
+      city,
+      localities = [],
+      sites = [],
+      pastedContent,
+      autoCall = false,
+      onStarted,
+    }) => {
     setError(null);
     setStatus('starting');
     try {
@@ -197,6 +216,15 @@ export function useSearch() {
       if (cancelled.current) return null;
       setSessionId(created.session_id);
       setStatus('running');
+
+      // The session exists and the backend is now crawling. Callers are told
+      // here rather than at the end, because this promise does not settle until
+      // the whole search has finished — which can be minutes, and which is a
+      // useless moment to learn the id. A caller that waited for the return
+      // value before showing the results tab left the customer on the previous
+      // screen for the entire crawl, and showed them nothing at all if it timed
+      // out, since the failure path returns null and never fires.
+      onStarted?.(created.session_id);
 
       const final = await api.waitForSession(created.session_id, {
         autoCall,
