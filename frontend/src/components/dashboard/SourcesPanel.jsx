@@ -328,7 +328,7 @@ const SourcesPanel = ({ onNavigate }) => {
               <span>{s.url}</span>
             </SourceInfo>
             <Right>
-              <Badge $tone="muted">Default</Badge>
+              <Badge $tone={s.native ? 'good' : 'muted'}>{s.native ? 'On Khoj' : 'Default'}</Badge>
               <Switch $on={s.enabled} onClick={() => toggleSource(s.id)} aria-label={`Toggle ${s.name}`} />
             </Right>
           </CardRow>

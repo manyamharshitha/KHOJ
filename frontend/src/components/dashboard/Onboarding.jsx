@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import styled from 'styled-components';
 import Button from '../ui/Button';
+import { useRole } from '../../lib/usePlatform';
 import { TextInput } from './dashboardUI';
 import {
   COMMON_QUESTIONS,
@@ -236,7 +237,10 @@ const buildQuestionCard = (base, overrides) => ({
 });
 
 const Onboarding = ({ firstName, onComplete, onSkip }) => {
-  const [stage, setStage] = useState('welcome');
+  // Which side of the product they are on is asked first, because the ten
+  // questions that follow are only worth asking a tenant. A broker answering
+  // "what is your budget" is being interviewed about a flat they own.
+  const [stage, setStage] = useState('role');
   const [qIndex, setQIndex] = useState(0);
   const [answers, setAnswers] = useState({});
   const [draft, setDraft] = useState('');
@@ -244,6 +248,34 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
   const [secondaryPicked, setSecondaryPicked] = useState([]);
   const [secondaryCustom, setSecondaryCustom] = useState([]);
   const [secondaryDraft, setSecondaryDraft] = useState('');
+
+  const [savingRole, setSavingRole] = useState(false);
+  const { choose } = useRole();
+
+  /**
+   * Record which side they are on, then move them somewhere useful.
+   *
+   * A broker skips the ten tenant questions entirely and lands on their own
+   * dashboard — the questions describe a flat someone wants to find, which is
+   * not a thing a broker is trying to do.
+   *
+   * A failure to save is not allowed to trap anyone on this screen. The role
+   * defaults to renter server-side and is changeable from the profile, so
+   * carrying on with the wrong one is recoverable; being stuck on a modal with
+   * no way past is not.
+   */
+  const chooseRole = async (role) => {
+    setSavingRole(true);
+    try {
+      await choose(role);
+    } catch {
+      /* recoverable — see above */
+    } finally {
+      setSavingRole(false);
+    }
+    if (role === 'broker') onSkip();
+    else setStage('welcome');
+  };
 
   const currentQ = COMMON_QUESTIONS[qIndex];
 
@@ -263,7 +295,9 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
   const secondaryTotal = secondaryPicked.length + secondaryCustom.length;
 
   const stagePct =
-    stage === 'welcome'
+    stage === 'role'
+      ? 2
+      : stage === 'welcome'
       ? 4
       : stage === 'questions'
         ? 10 + (qIndex / COMMON_QUESTIONS.length) * 65
@@ -388,6 +422,29 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
 
       <Center>
         <Box>
+          {stage === 'role' && (
+            <>
+              <Kicker>Welcome to Khoj</Kicker>
+              <Heading>Hey {firstName}, which brings you here?</Heading>
+              <Sub>
+                You can change this later — it decides what Khoj shows you, not who you are.
+              </Sub>
+              <Actions>
+                <Button arrow={false} onClick={() => chooseRole('renter')} disabled={savingRole}>
+                  I'm looking for a place
+                </Button>
+                <Button
+                  arrow={false}
+                  variant="ghost"
+                  onClick={() => chooseRole('broker')}
+                  disabled={savingRole}
+                >
+                  I have places to rent out
+                </Button>
+              </Actions>
+            </>
+          )}
+
           {stage === 'welcome' && (
             <>
               <Kicker>Welcome to Khoj</Kicker>

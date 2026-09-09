@@ -28,6 +28,7 @@ import {
   Title,
 } from './dashboardUI';
 import Button from '../ui/Button';
+import AddListingForm from './AddListingForm';
 
 const Field = styled.label`
   display: block;
@@ -216,6 +217,13 @@ const BrokerPanel = () => {
                   </StatNum>
                 </StatCard>
               </StatGrid>
+
+              {/* Above the calls, because listing a property is what causes
+                  them. A broker arriving at an empty dashboard needs somewhere
+                  to put their first flat, not a report on the calls they have
+                  not received yet. */}
+              <SectionTitle>Add a property</SectionTitle>
+              <AddListingForm />
 
               <SectionTitle>Incoming calls</SectionTitle>
               <Card>

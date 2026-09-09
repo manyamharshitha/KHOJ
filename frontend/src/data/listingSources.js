@@ -25,6 +25,21 @@
  */
 export const defaultSources = [
   {
+    id: 'khoj',
+    key: 'khoj',
+    name: 'Khoj Native Listings',
+    url: 'listed directly with us',
+    enabled: true,
+    readable: true,
+    contactGated: false,
+    // Not a website. The backend matches this key before the crawler is
+    // reached and reads our own `listings` collection instead. It is first in
+    // the list because it is the only source where the number was given to us
+    // by the person who holds the property rather than scraped off a page.
+    native: true,
+    note: 'Properties added to Khoj by owners and brokers. Always has a working number.',
+  },
+  {
     id: 'zolo',
     key: 'zolo',
     name: 'Zolo',

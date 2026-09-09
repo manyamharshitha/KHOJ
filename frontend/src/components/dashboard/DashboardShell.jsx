@@ -240,9 +240,14 @@ const initials = (name) =>
     .join('')
     .toUpperCase() || 'K';
 
-const DashboardShell = ({ active, onChange, profile, onProfileChange, children }) => {
+const DashboardShell = ({ active, onChange, allowed, profile, onProfileChange, children }) => {
   const navigate = useNavigate();
   const [profileOpen, setProfileOpen] = useState(false);
+
+  // `allowed` is the caller's list of panel ids for this account's role. Absent
+  // means show everything, which keeps the shell usable on its own and in any
+  // context that has no role to consult.
+  const visibleTabs = allowed ? TABS.filter((t) => allowed.includes(t.id)) : TABS;
 
   const handleLogout = () => {
     try {
@@ -279,7 +284,7 @@ const DashboardShell = ({ active, onChange, profile, onProfileChange, children }
 
       <Body>
         <Sidebar>
-          {TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <NavItem
               key={tab.id}
               data-tour-id={tab.id}
@@ -296,7 +301,7 @@ const DashboardShell = ({ active, onChange, profile, onProfileChange, children }
       </Body>
 
       <MobileTabs>
-        {TABS.map((tab) => (
+        {visibleTabs.map((tab) => (
           <MobileTab
             key={tab.id}
             data-tour-id={tab.id}

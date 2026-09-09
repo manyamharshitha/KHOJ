@@ -28,6 +28,7 @@ layer. :func:`_from_doc` maps ``_id`` onto the model's ``id`` field on read;
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any, TypeVar
@@ -41,12 +42,14 @@ from app.models import (
     BrokerProfile,
     CallLog,
     CallStatus,
+    KHOJ_SOURCE,
     HonestyReport,
     Listing,
     Negotiation,
     NegotiationOffer,
     Notification,
     PortalCredential,
+    SearchCriteria,
     SearchSession,
     SessionStatus,
     SiteVisit,
@@ -246,15 +249,14 @@ async def set_session_status(
     await update_session(session_id, status=status.value, error=error)
 
 
-async def list_recent_sessions(limit: int = 25) -> list[SearchSession]:
-    """The most recent searches, whoever ran them.
-
-    Used when nobody is signed in — with ``AUTH_REQUIRED`` off a session is
-    stored with ``customer_id=None``, so filtering by customer would return an
-    empty history for the very setup that is being demonstrated.
-    """
-    cursor = get_db()[SESSIONS].find({}).sort([("created_at", DESCENDING)]).limit(limit)
-    return [_model(SearchSession, d) async for d in cursor]
+# There is deliberately no `list_recent_sessions` here any more.
+#
+# It selected sessions with an empty filter — every account's — and existed so a
+# signed-out demo would not look empty. Both customer-facing readers reached for
+# it on their anonymous branch, so the dashboard totalled the whole database and
+# the history listed strangers' searches. A query with no tenant predicate is
+# not safe to keep within reach of a request handler; anything that needs to
+# read across accounts belongs behind an admin boundary that checks for one.
 
 
 async def list_sessions_for_customer(customer_id: str, limit: int = 25) -> list[SearchSession]:
@@ -315,6 +317,54 @@ async def listings_for_session(session_id: str) -> list[Listing]:
         .sort([("total_cost", ASCENDING), ("age_years", ASCENDING)])
     )
     return [_model(Listing, d) async for d in cursor]
+
+
+async def native_listings(
+    criteria: SearchCriteria, limit: int = 50
+) -> list[Listing]:
+    """Properties listed on Khoj itself that could match this search.
+
+    A coarse filter, deliberately. City and locality are matched
+    case-insensitively and rent is bounded generously, because everything
+    precise happens afterwards:
+    :func:`app.ranking.filter_hard_constraints` drops what genuinely does not
+    fit and :func:`app.ranking.rank_listings` orders the rest. Narrowing hard
+    here would silently discard a flat that a slightly different spelling of a
+    locality would have kept, and the customer would never learn it existed.
+
+    Ordered newest first: a listing added this week is likelier to still be
+    available than one added six months ago, and availability is the single
+    thing this product exists to establish.
+    """
+    query: dict[str, Any] = {"source_site": KHOJ_SOURCE, "listed_by_owner": True}
+
+    localities = [x for x in (criteria.localities or []) if x and x.strip()]
+    places = localities + ([criteria.city] if criteria.city else [])
+    if places:
+        # An owner types "Kondapur"; a searcher types "kondapur, hyderabad".
+        # Matching either field against either spelling is what makes a native
+        # listing findable at all.
+        patterns = [re.escape(p.strip()) for p in places]
+        joined = "|".join(patterns)
+        query["$or"] = [
+            {"locality": {"$regex": joined, "$options": "i"}},
+            {"title": {"$regex": joined, "$options": "i"}},
+        ]
+
+    if criteria.bedrooms is not None:
+        # A studio seeker will not take a 4BHK, but one bedroom either side of
+        # what was asked for is a reasonable thing to show.
+        query["bedrooms"] = {"$in": [criteria.bedrooms, criteria.bedrooms + 1]}
+
+    if criteria.max_total_monthly:
+        # Against rent alone, not total_cost: maintenance is frequently unstated
+        # on a listing, and a null total would exclude the row entirely.
+        query["$and"] = [
+            {"$or": [{"rent": {"$lte": criteria.max_total_monthly}}, {"rent": None}]}
+        ]
+
+    cursor = get_db()[LISTINGS].find(query).sort([("created_at", DESCENDING)]).limit(limit)
+    return [x async for d in cursor if (x := _model(Listing, d))]
 
 
 async def get_listings_by_session(session_id: str, limit: int = 100) -> list[Listing]:

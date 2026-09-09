@@ -37,6 +37,7 @@ from app.repositories import (
     get_session,
     listings_for_session,
     mark_listing_called,
+    native_listings,
     new_id,
     save_call,
     save_listings,
@@ -74,6 +75,46 @@ def inside_calling_window(at: datetime | None = None) -> bool:
 # --------------------------------------------------------------------------
 # search
 # --------------------------------------------------------------------------
+
+
+async def _native_for(session: SearchSession) -> list[Listing]:
+    """Properties listed on Khoj that belong in this search's results.
+
+    Copied into the searching session rather than referenced. A listing in this
+    schema belongs to the session that found it — that is what lets ranking,
+    calling, the quota and the honesty report all key off ``session_id`` without
+    knowing where a listing came from. Handing back a row owned by somebody
+    else's session would put a foreign key through all of them.
+
+    The copy keeps the owner's identity and the original id, so a native result
+    can still be traced back to the property it was taken from. It does not keep
+    ``called``: whether the owner's own listing has been rung before has nothing
+    to do with this customer's search.
+    """
+    try:
+        found = await native_listings(session.criteria, limit=settings.max_listings_per_site)
+    except Exception:  # noqa: BLE001 - native results must not sink a crawl
+        log.exception("[%s] could not read Khoj listings", session.id)
+        return []
+
+    copies: list[Listing] = []
+    for source in found:
+        # A broker's own search must not return the broker their own flat.
+        if session.customer_id and source.owner_id == session.customer_id:
+            continue
+        copy = source.model_copy(
+            update={
+                "id": new_id("lst"),
+                "session_id": session.id,
+                "called": False,
+                "created_at": utcnow(),
+                "ai_match_reason": "Listed directly on Khoj by the owner or their agent.",
+            }
+        )
+        copies.append(copy)
+
+    log.info("[%s] %d Khoj listing(s) merged into the results", session.id, len(copies))
+    return copies
 
 
 async def run_search(session: SearchSession) -> None:
@@ -172,6 +213,9 @@ async def run_search(session: SearchSession) -> None:
                     )
                     continue
                 listings.extend(result)
+
+        if session.include_native:
+            listings.extend(await _native_for(session))
 
         kept, dropped = filter_hard_constraints(listings, session.criteria)
         for listing, reason in dropped:

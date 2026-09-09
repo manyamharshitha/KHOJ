@@ -12,6 +12,7 @@ import BrokerPanel from '../components/dashboard/BrokerPanel';
 import { ONBOARDING_DONE_KEY, ONBOARDING_RESULT_KEY, TOUR_DONE_KEY } from '../data/onboardingQuestions';
 import { SearchProvider, useSearchSession } from '../lib/SearchContext';
 import { useProfile } from '../lib/useKhoj';
+import { useRole } from '../lib/usePlatform';
 import ErrorBoundary from '../components/ui/ErrorBoundary';
 
 const PANELS = {
@@ -23,6 +24,27 @@ const PANELS = {
   deposit: NegotiationsPanel,
   broker: BrokerPanel,
 };
+
+/**
+ * Which panels each side of the product can open.
+ *
+ * A tenant looks for a flat; a broker receives the calls that follow. Listing
+ * management is meaningless to the first and the search pipeline is meaningless
+ * to the second, so neither is offered what it cannot use.
+ *
+ * This is navigation, not security. The backend already refuses a broker route
+ * to an account that is not one — see `app/routes/brokers.py`, which says the
+ * separation is enforced there "rather than in the frontend: a dashboard that
+ * hides a section is a UI preference, while a route that refuses to return it
+ * is a permission". This keeps the two consistent so nobody is shown a tab that
+ * would answer 403.
+ */
+const PANELS_FOR = {
+  renter: ['overview', 'questions', 'sources', 'results', 'verified', 'deposit'],
+  broker: ['overview', 'broker', 'verified'],
+};
+
+const HOME_FOR = { renter: 'overview', broker: 'broker' };
 
 const readFlag = (key) => {
   try {
@@ -63,10 +85,22 @@ const DashboardInner = () => {
     setLocalProfile(next);
     if (next?.name && next.name !== displayName) void saveName(next.name);
   };
-  // An unrecognised tab id would make <Panel /> an undefined element type,
-  // which React reports as "Element type is invalid" and which takes the whole
-  // route down. Fall back to the overview instead of crashing.
-  const Panel = PANELS[tab] ?? Overview;
+  // Which side of the product this account is on. Defaults to renter while the
+  // role is still loading: showing a tenant the search for a moment is a far
+  // smaller wrong than flashing broker tools at them.
+  const { role } = useRole();
+  const allowed = PANELS_FOR[role] ?? PANELS_FOR.renter;
+
+  // Two failure modes collapse into one fallback here. An unrecognised tab id
+  // makes <Panel /> an undefined element type, which React reports as "Element
+  // type is invalid" and which takes the whole route down. A tab this role may
+  // not open is a different problem with the same answer: send them home rather
+  // than render it. Recomputed on every pass, so a role that arrives late — or
+  // changes — closes a panel that is no longer permitted instead of leaving it
+  // on screen.
+  const home = HOME_FOR[role] ?? 'overview';
+  const current = allowed.includes(tab) ? tab : home;
+  const Panel = PANELS[current] ?? Overview;
 
   const completeSetup = (questionCards) => {
     writeFlag(ONBOARDING_DONE_KEY);
@@ -96,12 +130,18 @@ const DashboardInner = () => {
   }
 
   return (
-    <DashboardShell active={tab} onChange={setTab} profile={profile} onProfileChange={onProfileChange}>
+    <DashboardShell
+      active={current}
+      onChange={setTab}
+      allowed={allowed}
+      profile={profile}
+      onProfileChange={onProfileChange}
+    >
       {/* Per-panel, so a panel that throws leaves the shell and its navigation
           standing — the customer can move to another tab instead of reloading.
           Keyed on the tab so leaving mounts a fresh boundary rather than
           carrying the previous panel's failure across. */}
-      <ErrorBoundary key={tab} title="This panel failed to load">
+      <ErrorBoundary key={current} title="This panel failed to load">
         <Panel onNavigate={setTab} profile={profile} sessionId={sessionId} />
       </ErrorBoundary>
       {phase === 'tour' && <GuidedTour onFinish={completeTour} onSkip={completeTour} />}

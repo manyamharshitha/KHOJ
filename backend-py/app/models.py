@@ -162,6 +162,21 @@ class SearchCriteria(Base):
 #: Source label for listings the customer pasted rather than ones we crawled.
 #: Shared by the route that creates the session and the pipeline that extracts
 #: it, so the provenance shown in the UI cannot drift between them.
+#: Properties listed on Khoj itself, by the owner or broker who holds them.
+#:
+#: These live in the same ``listings`` collection as anything scraped, carrying
+#: this as their ``source_site``. A separate collection was the obvious shape
+#: and the wrong one: ranking, calling, quota, results and the honesty report
+#: all read listings, and every one of them would have needed to learn about a
+#: second home for the same thing. A native listing is a listing whose
+#: provenance happens to be us.
+KHOJ_SOURCE = "Khoj"
+
+#: Requesting ``sites: ["khoj"]`` searches the above instead of a portal. Not a
+#: URL and never fetched — matched before the crawler is reached at all.
+KHOJ_SOURCE_KEY = "khoj"
+KHOJ_PLACEHOLDER_URL = "https://khoj.local/"
+
 PASTED_SOURCE = "Pasted content"
 
 #: Never fetched. ``TargetSite.url`` is a required ``HttpUrl`` and a session
@@ -195,6 +210,12 @@ class SearchSession(Base):
     #: ``SearchRequest`` is unreachable by the code that would use it — which is
     #: exactly how it came to be accepted by the API and silently discarded.
     pasted_content: str | None = Field(default=None, max_length=400_000)
+
+    #: Whether to include properties listed on Khoj itself. Lives on the session
+    #: for the same reason ``pasted_content`` does: the search runs as a
+    #: background task handed only this object, so anything left behind on the
+    #: request is unreachable by the code that would act on it.
+    include_native: bool = False
 
     status: SessionStatus = SessionStatus.QUEUED
     error: str | None = None
@@ -262,6 +283,15 @@ class Listing(Base):
     contact_number: str | None = Field(default=None, description="E.164, or None if gated.")
     contact_name: str | None = None
     is_broker: bool | None = None
+
+    #: Listed on Khoj by the person who holds the property, rather than found on
+    #: a portal. Paired with ``source_site == KHOJ_SOURCE``; kept as its own
+    #: field so the distinction survives a rename of the display string and can
+    #: be indexed on.
+    listed_by_owner: bool = False
+    #: The account that listed it. Only set for a native listing — a scraped
+    #: listing has an advertiser, not an owner on this platform.
+    owner_id: str | None = None
 
     ai_match_score: Unit | None = None
     ai_match_reason: str | None = None

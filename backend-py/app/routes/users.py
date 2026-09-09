@@ -22,7 +22,6 @@ from app.models import Base, CallStatus
 from app.repositories import (
     calls_for_sessions,
     get_user,
-    list_recent_sessions,
     list_sessions_for_customer,
     listings_by_ids,
     read_quota_doc,
@@ -190,18 +189,28 @@ class DashboardResponse(Base):
 async def dashboard(user: OptionalUser = None) -> DashboardResponse:
     """Everything the overview panel shows, in one round trip.
 
-    Signed in, this is that customer's own history. Signed out — which is the
-    case whenever ``AUTH_REQUIRED`` is off — sessions carry no customer id, so
-    the most recent ones are used instead; otherwise the demo would show an
-    empty dashboard immediately after a successful search.
+    Signed in, this is that customer's own history — and nobody else's.
+
+    An unidentified caller gets an empty dashboard. This used to fall back to
+    the fifty most recent sessions *across the whole database* so that a demo
+    with ``AUTH_REQUIRED`` off would not look empty after a search. The cost of
+    that convenience was every account seeing every other account's totals:
+    with auth off, everyone resolves to the same "anonymous" uid, so
+    "Listings matched" was the global sum and the activity feed listed
+    strangers' properties.
+
+    Showing nothing is the correct answer to "who are you?". A dashboard is
+    per-customer by definition, and there is no version of this endpoint where
+    reading another tenant's data is the lesser bug.
     """
     account = await require_user(user)
     uid = account.uid
 
-    if uid and uid not in ("anonymous", ""):
-        sessions = await list_sessions_for_customer(uid, limit=50)
-    else:
-        sessions = await list_recent_sessions(limit=50)
+    sessions = (
+        await list_sessions_for_customer(uid, limit=50)
+        if uid and uid not in ("anonymous", "")
+        else []
+    )
 
     session_ids = [x.id for x in sessions]
     calls = await calls_for_sessions(session_ids, limit=25)

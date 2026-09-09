@@ -21,6 +21,7 @@ from pydantic import Field, field_validator
 
 from app.core.auth import OptionalUser, require_user
 from app.models import (
+    KHOJ_SOURCE,
     Base,
     Listing,
     Rupees,
@@ -159,7 +160,13 @@ async def add_manual_listing(
     listing = Listing(
         id=new_id("lst"),
         session_id=session_id,
-        source_site=MANUAL_SOURCE,
+        # Stamped as a Khoj listing rather than a private note, which is what
+        # makes it findable by other people's searches. Adding a property by
+        # hand and having it be invisible to the search on the next screen was
+        # never a sensible reading of "add a listing".
+        source_site=KHOJ_SOURCE,
+        listed_by_owner=True,
+        owner_id=account.uid if account.uid not in ("anonymous", "") else None,
         title=body.title,
         locality=body.locality,
         bedrooms=body.bedrooms,

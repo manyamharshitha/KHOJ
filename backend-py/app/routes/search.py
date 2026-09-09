@@ -13,6 +13,9 @@ from app.core.auth import OptionalUser, read_quota, require_user
 from app.core.plans import Quota, check_call_allowance, clip_to_plan
 from app.llm.preferences import parse_preferences
 from app.models import (
+    KHOJ_PLACEHOLDER_URL,
+    KHOJ_SOURCE,
+    KHOJ_SOURCE_KEY,
     PASTED_PLACEHOLDER_URL,
     PASTED_SOURCE,
     ListingResult,
@@ -35,7 +38,6 @@ from app.repositories import (
     create_session,
     get_cached_locality,
     get_session,
-    list_recent_sessions,
     list_sessions_for_customer,
     listings_for_session,
     new_id,
@@ -145,6 +147,13 @@ async def start_search(
 
     pasted = (body.pasted_content or "").strip() or None
 
+    # "khoj" names our own listings, not a website. It is removed from the site
+    # list before anything tries to resolve it into a URL: left in, it reaches
+    # resolve_targets, matches no portal, and is dropped with a log line — so
+    # ticking the box would appear to work and quietly search nothing.
+    requested_sites = [s for s in body.sites if s.strip().lower() != KHOJ_SOURCE_KEY]
+    include_native = len(requested_sites) != len(body.sites)
+
     if pasted:
         # Pasted text is the path that works when a portal keeps its phone
         # numbers behind a login, so it takes priority over the site list and
@@ -156,15 +165,27 @@ async def start_search(
         targets = [
             TargetSite(name=PASTED_SOURCE, url=PASTED_PLACEHOLDER_URL, contact_gated=False)
         ]
+    elif include_native and not requested_sites:
+        # Khoj listings and nothing else. There is no page to fetch, so the
+        # crawler is skipped exactly as it is for pasted text. Falling through
+        # to resolve_targets here would be worse than useless: an empty list
+        # means "use the defaults", so asking for only our own listings would
+        # have crawled two portals the customer had deliberately switched off.
+        targets = [
+            TargetSite(name=KHOJ_SOURCE, url=KHOJ_PLACEHOLDER_URL, contact_gated=False)
+        ]
     else:
-        targets = resolve_targets(body.sites, criteria, max_sites=settings.max_sites_per_search)
+        targets = resolve_targets(
+            requested_sites, criteria, max_sites=settings.max_sites_per_search
+        )
 
         if not targets:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "None of those sites could be resolved. Use a known key "
-                    f"({', '.join(SITES)}) or a full https:// URL."
+                    f"({', '.join(SITES)}), 'khoj' for properties listed with us, "
+                    "or a full https:// URL."
                 ),
             )
 
@@ -175,6 +196,7 @@ async def start_search(
         criteria=criteria,
         target_sites=targets,
         pasted_content=pasted,
+        include_native=include_native,
     )
     await create_session(session)
 
@@ -219,20 +241,22 @@ async def list_history(
 ) -> dict[str, object]:
     """Past searches, newest first — the history behind the results.
 
-    Signed in, this is that customer's own searches. Signed out (or with
-    ``AUTH_REQUIRED`` off) it is simply the most recent ones, because a session
-    created anonymously carries no customer id and filtering by one would show
-    an empty history for exactly the setup being demonstrated.
+    Scoped to the signed-in customer, and empty for anyone this endpoint cannot
+    identify. It used to answer with the most recent searches across every
+    account when the caller was anonymous, which handed one customer another's
+    search history — the prompts they typed, the localities they are looking
+    in, how many calls they have placed.
 
     A summary only. Listings, transcripts and honesty reports stay behind
     ``/api/session/{id}/results`` rather than being fanned out here, so opening
     a history page does not read every transcript ever recorded.
     """
     account = await require_user(user)
-    if account.uid and account.uid != "anonymous":
-        sessions = await list_sessions_for_customer(account.uid, limit=limit)
-    else:
-        sessions = await list_recent_sessions(limit=limit)
+    sessions = (
+        await list_sessions_for_customer(account.uid, limit=limit)
+        if account.uid and account.uid not in ("anonymous", "")
+        else []
+    )
 
     return {
         "sessions": [
