@@ -129,14 +129,28 @@ async def browser_session() -> AsyncIterator["Browser"]:
     from playwright.async_api import async_playwright
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=True,
-            args=["--disable-dev-shm-usage", "--no-sandbox"],
+        # Bounded, because this is the await that hangs rather than fails.
+        # Chromium needs more memory than a small instance has, and when it
+        # cannot get it the launch stalls instead of raising — so the caller's
+        # `except` never fires, the crawl never returns, and the search sits in
+        # `scraping` forever. A deadline converts that into an error somebody
+        # can read.
+        browser = await asyncio.wait_for(
+            pw.chromium.launch(
+                headless=True,
+                args=["--disable-dev-shm-usage", "--no-sandbox"],
+            ),
+            timeout=settings.browser_launch_timeout_s,
         )
         try:
             yield browser
         finally:
-            await browser.close()
+            # Never allowed to hang the shutdown either: the browser may already
+            # be wedged, and this runs on the way out of a failure.
+            try:
+                await asyncio.wait_for(browser.close(), timeout=15.0)
+            except (TimeoutError, asyncio.TimeoutError):
+                log.warning("crawler: browser did not close cleanly")
 
 
 async def _settle(page) -> None: 
@@ -734,10 +748,45 @@ async def crawl(sites: list[TargetSite]) -> list[PageResult]:
 
             async def one(site: TargetSite) -> PageResult:
                 async with gate:
-                    return await _read_page(browser, site)
+                    # Per site, so one portal that stops responding mid-read
+                    # costs its own results and nothing else. `goto` is already
+                    # bounded, but the scrolling and contact-reveal work that
+                    # follows it was not, and `gather` waits for the slowest
+                    # member — one stalled site held the whole search open.
+                    try:
+                        return await asyncio.wait_for(
+                            _read_page(browser, site), timeout=settings.site_read_timeout_s
+                        )
+                    except (TimeoutError, asyncio.TimeoutError):
+                        log.warning(
+                            "crawler: %s did not finish within %.0fs — skipped",
+                            site.name,
+                            settings.site_read_timeout_s,
+                        )
+                        return PageResult(
+                            site=site,
+                            status=ListingSourceStatus.ERROR,
+                            note=(
+                                f"{site.name} did not respond within "
+                                f"{settings.site_read_timeout_s:.0f}s and was skipped."
+                            ),
+                        )
 
-            results = await asyncio.gather(*(one(s) for s in sites), return_exceptions=True)
-    except Exception as exc:  
+            results = await asyncio.wait_for(
+                asyncio.gather(*(one(s) for s in sites), return_exceptions=True),
+                timeout=settings.crawl_timeout_s,
+            )
+    except (TimeoutError, asyncio.TimeoutError):
+        log.error("crawler: the whole crawl exceeded %.0fs", settings.crawl_timeout_s)
+        return [
+            PageResult(
+                site=site,
+                status=ListingSourceStatus.ERROR,
+                note="The page reader ran out of time on this server.",
+            )
+            for site in sites
+        ]
+    except Exception as exc:
         log.error("crawler: could not start a browser (%s)", exc)
         note = (
             "The page reader could not start on this server — it needs Chromium "

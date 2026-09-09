@@ -139,6 +139,36 @@ class Settings(BaseSettings):
     max_listings_per_site: int = 25
     scrape_timeout_ms: int = 30_000
     scrape_concurrency: int = 3
+
+    # --- deadlines -------------------------------------------------------
+    #: Every one of these bounds an await that had no bound at all, and each
+    #: was chosen because a *hang* is not an exception: the search runs as a
+    #: background task, so nothing above it ever times out on its behalf. A
+    #: coroutine that never returns left the session in `scraping` for good,
+    #: which the customer reads as "still working" forever. Failing loudly
+    #: after a deadline is worse than succeeding and far better than that.
+
+    #: Starting headless Chromium. It is the launch, not the page load, that
+    #: hangs on a small instance: the browser needs more memory than a starter
+    #: dyno has, and it stalls rather than refusing.
+    browser_launch_timeout_s: float = 45.0
+
+    #: One portal, end to end — navigation, scrolling, contact reveals. Well
+    #: above `scrape_timeout_ms` because that bounds only the initial goto,
+    #: while lazy-loading and reveal clicks happen afterwards.
+    site_read_timeout_s: float = 120.0
+
+    #: Every portal together, including browser startup. A backstop for a stall
+    #: that is not inside any single site's work.
+    crawl_timeout_s: float = 300.0
+
+    #: One page of listing text through the model. A rate-limited provider can
+    #: leave an HTTP request open indefinitely.
+    extraction_timeout_s: float = 120.0
+
+    #: The whole search. The last line of defence: whatever hangs and wherever,
+    #: the session gets a terminal status and the customer gets an answer.
+    search_timeout_s: float = 900.0
     #: Identify the crawler honestly. Do not set this to a browser UA string to
     #: evade bot detection.
     user_agent: str = (

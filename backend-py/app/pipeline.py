@@ -122,7 +122,45 @@ async def run_search(session: SearchSession) -> None:
 
     Sites are processed independently: one portal blocking automated readers
     costs its own results and nothing else.
+
+    Wrapped in a deadline, and in a guard that guarantees a terminal status.
+    This runs as a background task with nobody waiting on it, so a coroutine
+    that never returns is invisible from the outside — the session simply stays
+    in ``scraping``, which the customer reads as "still working" indefinitely.
+    A search that failed must say so.
     """
+    try:
+        await asyncio.wait_for(_run_search(session), timeout=settings.search_timeout_s)
+    except (TimeoutError, asyncio.TimeoutError):
+        log.error(
+            "[%s] search exceeded %.0fs and was abandoned",
+            session.id,
+            settings.search_timeout_s,
+        )
+        await update_session(
+            session.id,
+            status=SessionStatus.FAILED.value,
+            error=(
+                "That search took too long and was stopped. The portals may be "
+                "slow or unreachable right now — try fewer sources, or paste a "
+                "listing URL instead."
+            ),
+        )
+    except asyncio.CancelledError:
+        # The worker is going away mid-search — a deploy, a restart, a shutdown.
+        # Record it before the task dies, then let the cancellation continue;
+        # swallowing it would lie to the event loop about having stopped.
+        log.warning("[%s] search cancelled before it finished", session.id)
+        await update_session(
+            session.id,
+            status=SessionStatus.FAILED.value,
+            error="That search was interrupted by a server restart. Please run it again.",
+        )
+        raise
+
+
+async def _run_search(session: SearchSession) -> None:
+    """The search itself. See :func:`run_search` for the deadline around it."""
     sid = session.id
     criteria_text = criteria_summary(session.criteria)
     log.info("[%s] search: %s", sid, criteria_text)
@@ -140,14 +178,17 @@ async def run_search(session: SearchSession) -> None:
             await set_session_status(sid, SessionStatus.EXTRACTING)
 
             try:
-                listings = await extract_listings(
-                    session_id=sid,
-                    source_site=PASTED_SOURCE,
-                    page_text=session.pasted_content,
-                    page_url=None,
-                    criteria=session.criteria,
-                    criteria_text=criteria_text,
-                    max_listings=settings.max_listings_per_site,
+                listings = await asyncio.wait_for(
+                    extract_listings(
+                        session_id=sid,
+                        source_site=PASTED_SOURCE,
+                        page_text=session.pasted_content,
+                        page_url=None,
+                        criteria=session.criteria,
+                        criteria_text=criteria_text,
+                        max_listings=settings.max_listings_per_site,
+                    ),
+                    timeout=settings.extraction_timeout_s,
                 )
             except Exception:
                 log.exception("[%s] extraction failed for pasted content", sid)
@@ -190,16 +231,24 @@ async def run_search(session: SearchSession) -> None:
 
             await set_session_status(sid, SessionStatus.EXTRACTING)
 
+            # Bounded per page. `gather` waits for its slowest member, so one
+            # model call left open by a rate-limited provider held the whole
+            # extraction — and with it the session — open indefinitely. A page
+            # that times out is reported below like any other failure and the
+            # rest of the search keeps its results.
             extracted = await asyncio.gather(
                 *(
-                    extract_listings(
-                        session_id=sid,
-                        source_site=page.site.name,
-                        page_text=page.text,
-                        page_url=page.final_url or str(page.site.url),
-                        criteria=session.criteria,
-                        criteria_text=criteria_text,
-                        max_listings=settings.max_listings_per_site,
+                    asyncio.wait_for(
+                        extract_listings(
+                            session_id=sid,
+                            source_site=page.site.name,
+                            page_text=page.text,
+                            page_url=page.final_url or str(page.site.url),
+                            criteria=session.criteria,
+                            criteria_text=criteria_text,
+                            max_listings=settings.max_listings_per_site,
+                        ),
+                        timeout=settings.extraction_timeout_s,
                     )
                     for page in readable
                 ),
