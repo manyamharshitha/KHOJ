@@ -101,13 +101,21 @@ async function request(path, { method = 'GET', body, signal, timeoutMs = REQUEST
     // our own deadline is reported as something a person can act on.
     if (err?.name === 'AbortError' && signal?.aborted) throw err;
     if (err?.name === 'AbortError') {
+      console.error(`[khoj api] ${method} ${BASE}${path} → timed out after ${timeoutMs}ms`);
       throw new ApiError(
         `The server did not respond within ${Math.round(timeoutMs / 1000)}s. It may be busy or waking up — try again.`,
         { status: 0, code: 'timeout' },
       );
     }
+    // A network-level failure reaches here with a deliberately useless message
+    // ("Failed to fetch") because the browser will not say more to script: a
+    // CORS rejection, DNS failure and refused connection are indistinguishable
+    // from here. Printing the URL at least says *which* origin was refused,
+    // which is usually enough to spot a wrong VITE_API_URL.
+    console.error(`[khoj api] ${method} ${BASE}${path} → network failure`, err);
     throw new ApiError(
-      'Could not reach the server. It may be starting up — free instances sleep after inactivity.',
+      `Could not reach the server at ${BASE}. It may be starting up — free instances ` +
+        'sleep after inactivity — or VITE_API_URL may be pointing somewhere wrong.',
       { status: 0 },
     );
   } finally {
@@ -132,6 +140,11 @@ async function request(path, { method = 'GET', body, signal, timeoutMs = REQUEST
       (Array.isArray(detail) ? detail.map((d) => d?.msg).filter(Boolean).join(', ') : detail) ||
       payload?.message ||
       `Request failed (${response.status})`;
+    // The URL and status, in full, once per failure. A 404 from a stale path,
+    // a 401 from an expired token and a CORS preflight rejection all reach a
+    // component as the same red banner, and the difference between them is the
+    // whole diagnosis. This is the only place that knows both.
+    console.error(`[khoj api] ${method} ${BASE}${path} → ${response.status}`, payload);
     throw new ApiError(message, { status: response.status, code: payload?.code });
   }
   return payload;

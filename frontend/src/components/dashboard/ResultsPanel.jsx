@@ -273,6 +273,16 @@ const statusFor = {
  * where "reading the pages" followed by "pulling out the details" reads as
  * progress.
  */
+/**
+ * How long the panel will claim a search is running before it stops believing
+ * its own status.
+ *
+ * Ninety seconds, not sixty. A cold Render instance takes thirty just to wake,
+ * and a five-portal crawl is genuinely slower than a minute — cutting a working
+ * search off to prove responsiveness would trade one wrong answer for another.
+ */
+const SPINNER_CEILING_MS = 90_000;
+
 const SEARCH_PROGRESS = {
   starting: 'Starting the search…',
   queued: 'Queued…',
@@ -338,13 +348,44 @@ const ResultsPanel = ({ sessionId = null }) => {
   // context rather than a prop, because Sources navigates here the moment the
   // session is created and the crawl continues for some time afterwards — this
   // panel is where that wait is actually shown.
-  const { status: searchStatus, isBusy: searching, error: searchError } = useSearchSession();
+  const { status: searchStatus, isBusy: reportedBusy, error: searchError } = useSearchSession();
+
+  /**
+   * A ceiling on the spinner, independent of what the backend says.
+   *
+   * Everything else here trusts the session status to stop being a running one.
+   * That trust is misplaced in exactly the case that matters: if the worker is
+   * killed rather than raising, nothing ever writes a terminal status, and the
+   * customer watches a progress bar with no end. The backend now reaps those
+   * on its next boot, but "next boot" is not a timescale a person waiting on a
+   * screen cares about.
+   *
+   * So the panel gives up on its own and shows whatever exists. Listings arrive
+   * incrementally, so there is usually something; when there is not, saying the
+   * search is still going is worse than admitting it stalled.
+   */
+  const [gaveUp, setGaveUp] = useState(false);
+
+  useEffect(() => {
+    if (!reportedBusy) {
+      setGaveUp(false);
+      return undefined;
+    }
+    const timer = setTimeout(() => setGaveUp(true), SPINNER_CEILING_MS);
+    return () => clearTimeout(timer);
+  }, [reportedBusy, sessionId]);
+
+  const searching = reportedBusy && !gaveUp;
 
   // Live results when a session is open and the backend is reachable, and an
   // empty list otherwise — there is no sample set to fall back to any more.
   // `active` keeps it polling while the crawl is still producing listings.
+  // Keyed on what the backend reports, not on whether the spinner is still up.
+  // Giving up on the spinner is a statement about how long a person should be
+  // asked to watch one; it is not a decision to stop collecting results, and
+  // listings that arrive late should still appear.
   const { runs: rawRuns, isLive, loading, error, reload } = useResults(sessionId, {
-    active: searching,
+    active: reportedBusy,
   });
 
   /** Place the call, now that the customer has said yes to this property. */
@@ -526,7 +567,24 @@ const ResultsPanel = ({ sessionId = null }) => {
         </Card>
       )}
 
-      {!searching && !searchError && !loading && !error && visible.length === 0 && (
+      {/* The backend still calls this search live; the panel has stopped
+          believing it. Say so plainly rather than either spinning forever or
+          pretending the search finished normally. */}
+      {gaveUp && reportedBusy && (
+        <Card>
+          <ResultsEmpty>
+            <SectionLabel>This is taking longer than expected</SectionLabel>
+            <p>
+              {visible.length > 0
+                ? 'Showing what has been found so far. Anything still arriving will appear here.'
+                : 'The search has not returned anything yet. The portals may be slow or ' +
+                  'unreachable — try fewer sources, or add a listing by hand.'}
+            </p>
+          </ResultsEmpty>
+        </Card>
+      )}
+
+      {!searching && !gaveUp && !searchError && !loading && !error && visible.length === 0 && (
         <Card>
           <ResultsEmpty>
             <SectionLabel>Nothing here yet</SectionLabel>

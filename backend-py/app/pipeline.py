@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
 from app.config import settings
@@ -156,6 +157,25 @@ async def run_search(session: SearchSession) -> None:
             status=SessionStatus.FAILED.value,
             error="That search was interrupted by a server restart. Please run it again.",
         )
+        raise
+    except BaseException as exc:
+        # Deliberately wider than Exception. A background task that dies takes
+        # its traceback with it — nothing is awaiting this coroutine, so an
+        # exception here is reported nowhere and the session is left mid-flight.
+        # MemoryError and KeyboardInterrupt are not Exceptions and are exactly
+        # what a browser on a small instance produces.
+        #
+        # The class name is logged explicitly because that is the part that
+        # identifies the failure: "MemoryError" and "TargetClosedError" say
+        # completely different things about what to fix, and str(exc) is empty
+        # for several of them.
+        log.exception("[%s] search died: %s", session.id, exc.__class__.__name__)
+        with suppress(Exception):
+            await update_session(
+                session.id,
+                status=SessionStatus.FAILED.value,
+                error=f"That search stopped unexpectedly ({exc.__class__.__name__}).",
+            )
         raise
 
 

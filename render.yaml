@@ -7,7 +7,15 @@ services:
     rootDir: backend-py
     branch: main
 
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    # See backend-py/build.sh. It installs Chromium and the OS libraries it
+    # links against, then proves the browser launches — because `pip install
+    # playwright` provides only the Python client, and a crawler with no
+    # browser fails at runtime in the worst possible way: silently, mid-search,
+    # after the customer has already been told it is working.
+    # Invoked through bash rather than as ./build.sh: the file is authored on
+    # Windows, where git does not record an executable bit, and a build that
+    # dies on "permission denied" is a poor reward for fixing the browser.
+    buildCommand: bash ./build.sh
 
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health

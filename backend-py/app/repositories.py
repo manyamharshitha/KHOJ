@@ -259,6 +259,49 @@ async def set_session_status(
 # read across accounts belongs behind an admin boundary that checks for one.
 
 
+#: Statuses a search sits in only while a worker is actively running it.
+_IN_FLIGHT = [
+    SessionStatus.QUEUED.value,
+    SessionStatus.SCRAPING.value,
+    SessionStatus.EXTRACTING.value,
+]
+
+
+async def fail_orphaned_sessions(older_than: timedelta) -> int:
+    """Fail searches whose worker died without finishing them.
+
+    The one failure no amount of exception handling reaches. A search runs as a
+    background task inside the web process; if that process is killed rather
+    than raising — OOM, a deploy, a platform restart — no ``except`` runs, no
+    ``finally`` runs, and no timeout fires, because all three are code and the
+    process is gone. The session is simply left in ``scraping`` for ever, which
+    the customer reads as "still working" and waits on indefinitely.
+
+    Chromium makes this the likely case rather than the rare one: it wants more
+    memory than a small instance has, and the kernel answers that with SIGKILL.
+
+    Called at startup, when a worker that has just booted knows that anything
+    still marked in-flight cannot be running: whatever was doing it is gone.
+    The age bound protects a search legitimately in progress in *another*
+    instance from being failed by this one's boot.
+    """
+    cutoff = utcnow() - older_than
+    result = await get_db()[SESSIONS].update_many(
+        {"status": {"$in": _IN_FLIGHT}, "updated_at": {"$lt": cutoff}},
+        {
+            "$set": {
+                "status": SessionStatus.FAILED.value,
+                "error": (
+                    "That search stopped unexpectedly — the server restarted while "
+                    "it was running. Please run it again."
+                ),
+                "updated_at": utcnow(),
+            }
+        },
+    )
+    return int(getattr(result, "modified_count", 0) or 0)
+
+
 async def list_sessions_for_customer(customer_id: str, limit: int = 25) -> list[SearchSession]:
     cursor = (
         get_db()[SESSIONS]

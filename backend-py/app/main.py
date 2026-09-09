@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import timedelta
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
@@ -19,6 +20,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.core import scheduler
 from app.core.db import DatabaseNotReady, connect, disconnect, get_db
+from app.repositories import fail_orphaned_sessions
 from app.core.indexes import ensure_indexes
 from app.routes import auth as auth_routes
 from app.routes import (
@@ -73,6 +75,23 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await ensure_indexes(get_db())
         except Exception:  # noqa: BLE001 - an index is not worth failing a boot
             log.exception("indexes: could not be created; continuing without them")
+
+    # Anything still marked as running cannot be: this process has just booted,
+    # so whatever was doing it is gone. A worker killed mid-search — OOM from
+    # Chromium, a deploy, a platform restart — runs no `except`, no `finally`
+    # and no timeout, because all three are code. Without this the session stays
+    # in `scraping` for ever and the customer watches a progress bar that will
+    # never move.
+    if database_ready:
+        try:
+            orphaned = await fail_orphaned_sessions(older_than=timedelta(minutes=15))
+            if orphaned:
+                log.warning(
+                    "startup: failed %d search(es) left running by a previous worker",
+                    orphaned,
+                )
+        except Exception:  # noqa: BLE001 - housekeeping must not stop a boot
+            log.exception("startup: could not reap orphaned searches")
 
     log.info(
         "khoj-py up · db=%s(%s) · telephony=%s · llm=%s · auth=%s",

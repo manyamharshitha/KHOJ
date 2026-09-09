@@ -372,6 +372,17 @@ const SourcesPanel = ({ onNavigate }) => {
         >
           {isBusy ? 'Searching properties...' : 'Search Properties From Selected Sources'}
         </Button>
+        {/* Against the button that started it. A failed POST leaves the
+            customer on this panel — the navigation is triggered by the session
+            being created, which never happened — so an error reported only on
+            the Results tab would be somewhere they never reach. */}
+        {error && !isBusy && (
+          <FormNote $error style={{ marginTop: '0.7rem' }}>
+            {error.isQuotaExhausted
+              ? error.message
+              : `That search could not start — ${error.message}`}
+          </FormNote>
+        )}
       </div>
 
       {added && (

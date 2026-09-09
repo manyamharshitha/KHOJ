@@ -96,7 +96,18 @@ export function SearchProvider({ children }) {
       session: search.session,
       error: search.error,
       isConfigured: search.isConfigured,
-      isBusy: ['starting', 'running', 'scraping', 'extracting', 'calling'].includes(search.status),
+      // Every non-terminal status, and it must stay that way. These are the
+      // lowercase values of SessionStatus in app/models.py; the terminal ones
+      // are `ranked`, `complete` and `failed`.
+      //
+      // `queued` was missing, which inverted the meaning of the panel for the
+      // first seconds of every search: a session created but not yet picked up
+      // by the background task reported not-busy, so Results hid the progress
+      // card, stopped polling, and told the customer there was nothing there —
+      // about a search that had only just started.
+      isBusy: ['starting', 'queued', 'running', 'scraping', 'extracting', 'calling'].includes(
+        search.status,
+      ),
     }),
     [sessionId, startSearch, adoptSession, clearSearch, search],
   );
