@@ -218,11 +218,71 @@ async def run_search(session: SearchSession) -> None:
 # --------------------------------------------------------------------------
 
 
-async def run_calls(session_id: str, limit: int | None = None) -> None:
+async def reserve_calls(
+    session: SearchSession, limit: int | None = None
+) -> list[tuple[Listing, CallLog]]:
+    """Create the call rows for a session *before* any dialling starts.
+
+    This exists to close a race, not to save a round trip. Creating the CallLog
+    inside the background task meant the row did not exist yet when the browser
+    fetched ``/results`` a moment after the 202 — the listing came back with
+    ``call: null``, which the UI could not tell apart from a queued call, so a
+    call that was actually ringing rendered as "scheduled" and stayed that way.
+
+    Reserving synchronously means the row is on disk before the request returns:
+    whatever the browser reads next, it reads a real status.
+    """
+    listings = await listings_for_session(session.id)
+    ceiling = limit or settings.max_calls_per_session
+    reserved: list[tuple[Listing, CallLog]] = []
+
+    for listing in call_order(listings, ceiling):
+        phone = listing.contact_number
+        if not phone:
+            continue
+
+        call = CallLog(
+            id=new_id("cal"),
+            session_id=session.id,
+            customer_id=session.customer_id,
+            listing_id=listing.id,
+            phone_dialed=phone,
+            call_status=CallStatus.DIALING,
+            started_at=utcnow(),
+        )
+
+        # The cooldown is decided here rather than at dial time so that a number
+        # which will never be rung is never shown as ringing.
+        if settings.bypass_call_window:
+            log.warning(
+                "[%s] BYPASS_CALL_WINDOW is on — window and %d-day cooldown skipped for %s",
+                session.id,
+                settings.number_cooldown_days,
+                phone,
+            )
+        elif await called_recently(phone, settings.number_cooldown_days):
+            call.call_status = CallStatus.BLOCKED
+            call.error = f"Already called within {settings.number_cooldown_days} days"
+
+        await create_call(call)
+        reserved.append((listing, call))
+
+    return reserved
+
+
+async def run_calls(
+    session_id: str,
+    limit: int | None = None,
+    reserved: list[tuple[Listing, CallLog]] | None = None,
+) -> None:
     """Phone the ranked listings, cheapest first.
 
     Bounded by ``max_concurrent_calls``: the cap exists so a run does not ring
     forty phones at once, and so a free-tier quota is not spent in one burst.
+
+    ``reserved`` carries rows already created by :func:`reserve_calls`. When it
+    is None this reserves its own — the auto-call path calls straight in here
+    with no HTTP request in front of it to have done the work.
     """
     session = await get_session(session_id)
     if session is None:
@@ -250,11 +310,11 @@ async def run_calls(session_id: str, limit: int | None = None) -> None:
         log.info("[%s] quota exhausted on %s, nothing dialled", session_id, tier)
         return
 
-    listings = await listings_for_session(session_id)
     ceiling = min(limit or settings.max_calls_per_session, quota.remaining)
-    targets = call_order(listings, ceiling)
+    if reserved is None:
+        reserved = await reserve_calls(session, ceiling)
 
-    if not targets:
+    if not reserved:
         await update_session(
             session_id,
             status=SessionStatus.COMPLETE.value,
@@ -263,9 +323,12 @@ async def run_calls(session_id: str, limit: int | None = None) -> None:
         return
 
     await set_session_status(session_id, SessionStatus.CALLING)
-    log.info("[%s] calling %d listing(s)", session_id, len(targets))
+    log.info("[%s] calling %d listing(s)", session_id, len(reserved))
 
-    await asyncio.gather(*(_call_one(session, x) for x in targets), return_exceptions=True)
+    await asyncio.gather(
+        *(_call_one(session, listing, call) for listing, call in reserved),
+        return_exceptions=True,
+    )
 
     session = await get_session(session_id)
     await update_session(
@@ -336,48 +399,24 @@ async def _write_verification(
         log.exception("[%s] could not write verification record", call.id)
 
 
-async def _call_one(session: SearchSession, listing: Listing) -> None:
-    """Verify one listing by phone, then analyse what was said."""
-    phone = listing.contact_number
-    if not phone:
+async def _call_one(session: SearchSession, listing: Listing, call: CallLog) -> None:
+    """Verify one listing by phone, then analyse what was said.
+
+    ``call`` is already persisted by :func:`reserve_calls`. This dials it and
+    records what happened; it never creates the row itself, so there is no
+    window in which a listing is being called but has no call to show for it.
+    """
+    if call.call_status is CallStatus.BLOCKED:
+        log.info(
+            "[%s] skipped %s — called within the last %d days. "
+            "Set BYPASS_CALL_WINDOW=true to dial it again while testing.",
+            session.id,
+            call.phone_dialed,
+            settings.number_cooldown_days,
+        )
         return
 
     async with _call_gate:
-        call = CallLog(
-            id=new_id("cal"),
-            session_id=session.id,
-            customer_id=session.customer_id,
-            listing_id=listing.id,
-            phone_dialed=phone,
-            call_status=CallStatus.DIALING,
-            started_at=utcnow(),
-        )
-        log.info("[%s] call created with status=%s phone=%s", session.id, call.call_status.value, phone)
-
-        if settings.bypass_call_window:
-            # Logged at warning level deliberately. Silently ignoring the
-            # cooldown is how a test configuration reaches production and starts
-            # ringing the same broker every hour.
-            log.warning(
-                "[%s] BYPASS_CALL_WINDOW is on — window and %d-day cooldown skipped for %s",
-                session.id,
-                settings.number_cooldown_days,
-                phone,
-            )
-        elif await called_recently(phone, settings.number_cooldown_days):
-            call.call_status = CallStatus.BLOCKED
-            call.error = f"Already called within {settings.number_cooldown_days} days"
-            await create_call(call)
-            log.info(
-                "[%s] skipped %s — called within the last %d days. "
-                "Set BYPASS_CALL_WINDOW=true to dial it again while testing.",
-                session.id,
-                phone,
-                settings.number_cooldown_days,
-            )
-            return
-
-        await create_call(call)
         await mark_listing_called(listing.id)
 
         try:

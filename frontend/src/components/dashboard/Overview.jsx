@@ -195,7 +195,9 @@ const Overview = ({ onNavigate, profile }) => {
         {activity.slice(0, 4).map((run, i) => {
           // Two lookups deep, either of which can miss: an unmapped call_status
           // yields undefined, and `meta.tone` on undefined throws during render.
-          const meta = STATUS_META[STATUS_KEY[run.status] ?? 'scheduled'] ?? STATUS_META.scheduled;
+          // The floor is `pending`, not `scheduled` — a status we cannot read is
+          // not a promise that a call is queued.
+          const meta = STATUS_META[STATUS_KEY[run.status] ?? 'pending'] ?? STATUS_META.pending;
           return (
             <RunRow key={run.id ?? i}>
               <RunInfo>

@@ -26,7 +26,7 @@ from app.models import (
     as_utc,
     utcnow,
 )
-from app.pipeline import run_calls, run_search
+from app.pipeline import reserve_calls, run_calls, run_search
 from app.ranking import rank_listings
 from app.repositories import (
     calls_for_session,
@@ -385,16 +385,33 @@ async def call_all(
     remaining_today = max(0, settings.max_calls_per_day - allowance.calls_today)
     ceiling = min(limit or settings.max_calls_per_session, quota.remaining, remaining_today)
 
-    # Update status to CALLING immediately so the frontend knows calls are active,
-    # rather than waiting for the background task to start (which could be delayed).
+    # The call rows are written here, in the request, and not in the background
+    # task that dials them. Creating them later left a window — short, but always
+    # hit, because the browser navigates to the results the instant this returns —
+    # in which the listing existed and its call did not. The results endpoint then
+    # answered `call: null`, which renders as "scheduled": a call that was about to
+    # ring read as one that had merely been booked, and nothing later corrected it.
+    reserved = await reserve_calls(session, ceiling)
+    if not reserved:
+        raise HTTPException(
+            status_code=409,
+            detail="No listing had a phone number to dial.",
+        )
+
     await set_session_status(session_id, SessionStatus.CALLING)
-    background.add_task(run_calls, session_id, ceiling)
+    background.add_task(run_calls, session_id, ceiling, reserved)
     return {
         "session_id": session_id,
-        "queued": min(len(dialable), ceiling),
+        "queued": len(reserved),
         "tier": tier.value,
-        "remaining_after": max(0, quota.remaining - min(len(dialable), ceiling)),
+        "remaining_after": max(0, quota.remaining - len(reserved)),
         "status": SessionStatus.CALLING.value,
+        # The rows the caller can already read back, so the results view has
+        # something real to render on its very first fetch.
+        "calls": [
+            {"call_id": c.id, "listing_id": c.listing_id, "call_status": c.call_status.value}
+            for _, c in reserved
+        ],
     }
 
 

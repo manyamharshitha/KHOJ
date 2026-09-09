@@ -142,6 +142,23 @@ export function useResults(sessionId) {
     if (ready) void load();
   }, [ready, load]);
 
+  // A call is not an instant. It is dialled, answered, talked through and only
+  // then analysed — minutes, during which the row on screen goes DIALING →
+  // IN_PROGRESS → COMPLETED. Fetching once meant the panel showed whichever
+  // state happened to exist at the moment it mounted and then froze there, so a
+  // call that connected and finished still read as "Calling now" until the
+  // customer reloaded the page by hand.
+  //
+  // Polling stops as soon as nothing is live, so a settled result set costs
+  // nothing.
+  const inFlight = runs.some((r) => r.status === 'calling' || r.status === 'scheduled');
+
+  useEffect(() => {
+    if (!ready || !inFlight) return undefined;
+    const timer = setInterval(() => void load(), 5000);
+    return () => clearInterval(timer);
+  }, [ready, inFlight, load]);
+
   return { runs, isLive, loading, error, reload: load };
 }
 

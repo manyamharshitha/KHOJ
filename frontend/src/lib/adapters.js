@@ -24,10 +24,21 @@ const STATUS_MAP = {
   blocked: 'no-answer',
 };
 
-/** A verdict of `dead` outranks the call status — the call worked, the flat didn't. */
+/**
+ * A verdict of `dead` outranks the call status — the call worked, the flat didn't.
+ *
+ * A listing with no call at all is `pending`, never `scheduled`. Those are
+ * different facts and collapsing them hid a real bug: a call that was ringing
+ * showed as "Scheduled" because its row had not been written yet, and the label
+ * was indistinguishable from a call genuinely sitting in the queue. An
+ * unrecognised status is also `pending` rather than `scheduled` — inventing a
+ * queue position for a state we cannot read is worse than admitting we cannot
+ * read it.
+ */
 function statusFor(call, honesty) {
   if (honesty?.final_verdict === 'likely_misleading') return 'dead';
-  return STATUS_MAP[call?.call_status] ?? 'scheduled';
+  if (!call) return 'pending';
+  return STATUS_MAP[call.call_status] ?? 'pending';
 }
 
 const rupees = (n) =>
