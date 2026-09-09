@@ -384,6 +384,10 @@ async def call_all(
     # for: a session with ten dialable listings must not spend ten calls.
     remaining_today = max(0, settings.max_calls_per_day - allowance.calls_today)
     ceiling = min(limit or settings.max_calls_per_session, quota.remaining, remaining_today)
+
+    # Update status to CALLING immediately so the frontend knows calls are active,
+    # rather than waiting for the background task to start (which could be delayed).
+    await set_session_status(session_id, SessionStatus.CALLING)
     background.add_task(run_calls, session_id, ceiling)
     return {
         "session_id": session_id,

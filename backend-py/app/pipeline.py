@@ -374,6 +374,10 @@ async def _call_one(session: SearchSession, listing: Listing) -> None:
             )
             return
 
+        # Mark as DIALING immediately so the UI shows active calling status right away,
+        # rather than showing QUEUED/SCHEDULED while the background task starts.
+        call.call_status = CallStatus.DIALING
+        call.started_at = utcnow()
         await create_call(call)
         await mark_listing_called(listing.id)
 
@@ -386,8 +390,6 @@ async def _call_one(session: SearchSession, listing: Listing) -> None:
             log.error("[%s] telephony unavailable: %s", session.id, exc)
             return
 
-        call.call_status = CallStatus.DIALING
-        call.started_at = utcnow()
         await save_call(call)
 
         task = build_task(listing, session.criteria, criteria_summary(session.criteria))

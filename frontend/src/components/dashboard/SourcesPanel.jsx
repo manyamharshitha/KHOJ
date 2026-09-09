@@ -364,6 +364,18 @@ const SourcesPanel = ({ onNavigate }) => {
         {draftNote && <FormNote>{draftNote}</FormNote>}
       </Card>
 
+      <div style={{ marginTop: '1.2rem' }}>
+        <Button
+          size="sm"
+          arrow={false}
+          disabled={isBusy || !hasAnswers || (!sources.some((s) => s.enabled) && custom.length === 0)}
+          onClick={runSearch}
+          style={{ width: '100%', backgroundColor: '#000', color: '#fff', padding: '0.6rem', borderRadius: '6px' }}
+        >
+          {isBusy ? 'Searching properties...' : 'Search Properties From Selected Sources'}
+        </Button>
+      </div>
+
       {added && (
         <ListingAddedDialog
           phone={added.phone}
