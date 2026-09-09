@@ -349,6 +349,8 @@ async def _call_one(session: SearchSession, listing: Listing) -> None:
             customer_id=session.customer_id,
             listing_id=listing.id,
             phone_dialed=phone,
+            call_status=CallStatus.DIALING,
+            started_at=utcnow(),
         )
 
         if settings.bypass_call_window:
@@ -374,10 +376,6 @@ async def _call_one(session: SearchSession, listing: Listing) -> None:
             )
             return
 
-        # Mark as DIALING immediately so the UI shows active calling status right away,
-        # rather than showing QUEUED/SCHEDULED while the background task starts.
-        call.call_status = CallStatus.DIALING
-        call.started_at = utcnow()
         await create_call(call)
         await mark_listing_called(listing.id)
 
