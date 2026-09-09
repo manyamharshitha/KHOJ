@@ -12,7 +12,7 @@ import BrokerPanel from '../components/dashboard/BrokerPanel';
 import { ONBOARDING_DONE_KEY, ONBOARDING_RESULT_KEY, TOUR_DONE_KEY } from '../data/onboardingQuestions';
 import { SearchProvider, useSearchSession } from '../lib/SearchContext';
 import { useProfile } from '../lib/useKhoj';
-import { useRole } from '../lib/usePlatform';
+import { RoleProvider, useRole } from '../lib/usePlatform';
 import ErrorBoundary from '../components/ui/ErrorBoundary';
 
 const PANELS = {
@@ -154,9 +154,11 @@ const DashboardInner = () => {
  * read it, without either knowing about the other.
  */
 const Dashboard = () => (
-  <SearchProvider>
-    <DashboardInner />
-  </SearchProvider>
+  <RoleProvider>
+    <SearchProvider>
+      <DashboardInner />
+    </SearchProvider>
+  </RoleProvider>
 );
 
 export default Dashboard;

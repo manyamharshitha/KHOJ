@@ -173,13 +173,13 @@ const SourcesPanel = ({ onNavigate }) => {
    * number on them, and portals keep contact details behind a login.
    */
   const runSearch = async () => {
-    const text = buildPromptFromAnswers();
-    if (!text || isBusy) return;
+    if (isBusy) return;
 
     const sites = [
       ...custom.map((c) => c.url),
       ...sources.filter((s) => s.enabled).map((s) => s.key ?? s.id),
     ].slice(0, 5); // the backend caps at five and rejects more
+    if (!sites.length) return;
 
     // The questionnaire already asked which city and which area. Sending them
     // as fields, rather than hoping the model re-extracts them from the prompt,
@@ -193,6 +193,18 @@ const SourcesPanel = ({ onNavigate }) => {
     } catch {
       /* no saved answers is normal on a first visit */
     }
+
+    // The ten questions decide what Khoj *asks on the call*. They were also,
+    // wrongly, deciding whether a search could run at all: with none answered
+    // this returned before reaching the API, so anyone who skipped setup got a
+    // permanently dead "Search properties" button and a page that looked like a
+    // static shell. Searching is the thing that does not need them — the worst
+    // case is a broader result set.
+    const text =
+      buildPromptFromAnswers() ||
+      ['Rental listings', localities[0] || city ? `in ${localities[0] || city}` : '']
+        .filter(Boolean)
+        .join(' ');
 
     const id = await startSearch({ prompt: text, city, localities, sites });
     if (id) {
@@ -286,21 +298,27 @@ const SourcesPanel = ({ onNavigate }) => {
     const url = draft.trim();
     if (!url) return;
 
-    // A bare portal name ("nobroker"), not a pasted URL: warn now, rather than
-    // after a search comes back with nothing dialable.
+    // A bare portal name ("nobroker"), not a pasted URL: say what to expect
+    // from it, then add it anyway.
+    //
+    // This used to return here and refuse the source outright, because the
+    // numbers are behind a login and a listing Khoj cannot ring was treated as
+    // worthless. That is the wrong way round: the rent, the locality and the
+    // size are all on the page and are most of what a person decides on.
+    // Refusing to search MagicBricks because we cannot dial it withheld the
+    // listings as well as the call.
+    let note = null;
     if (!/^https?:\/\//.test(url)) {
       const known = findKnownSource(url);
       if (known?.contactGated) {
-        setDraftNote(
-          `${known.name} keeps contact numbers behind a login, and we don't have an ` +
-            "agreement with them for that — so it can't be searched automatically yet. " +
-            'Paste a specific listing URL instead, or add the number below if you have it.'
-        );
-        return;
+        note =
+          `${known.name} will be searched and its listings shown. Its phone numbers ` +
+          'sit behind a login, so Khoj cannot place a verification call to those — ' +
+          "you'll see the property and can ring it yourself.";
       }
     }
 
-    setDraftNote(null);
+    setDraftNote(note);
     // Adding the same site twice would send it two identical calls.
     if (custom.some((c) => c.url === url)) {
       setDraft('');
@@ -325,10 +343,14 @@ const SourcesPanel = ({ onNavigate }) => {
           <CardRow key={s.id}>
             <SourceInfo>
               <strong>{s.name}</strong>
-              <span>{s.url}</span>
+              <span>{s.note || s.url}</span>
             </SourceInfo>
             <Right>
-              <Badge $tone={s.native ? 'good' : 'muted'}>{s.native ? 'On Khoj' : 'Default'}</Badge>
+              {/* What the badge reports is whether Khoj can *call* what it
+                  finds there — every source in this list can be searched. */}
+              <Badge $tone={s.native ? 'good' : s.contactGated ? 'muted' : 'accent'}>
+                {s.native ? 'On Khoj' : s.contactGated ? 'Listings only' : 'Callable'}
+              </Badge>
               <Switch $on={s.enabled} onClick={() => toggleSource(s.id)} aria-label={`Toggle ${s.name}`} />
             </Right>
           </CardRow>
@@ -368,7 +390,7 @@ const SourcesPanel = ({ onNavigate }) => {
         <Button
           size="sm"
           arrow={false}
-          disabled={isBusy || !hasAnswers || (!sources.some((s) => s.enabled) && custom.length === 0)}
+          disabled={isBusy || (!sources.some((s) => s.enabled) && custom.length === 0)}
           onClick={runSearch}
           style={{ width: '100%', backgroundColor: '#000', color: '#fff', padding: '0.6rem', borderRadius: '6px' }}
         >
@@ -427,7 +449,7 @@ const SourcesPanel = ({ onNavigate }) => {
               onChange={(e) => setManualPhone(e.target.value)}
               aria-label="Phone number"
             />
-            <Button type="submit" size="sm" arrow={false} disabled={busy || (!manualPhone.trim() && !hasAnswers)}>
+            <Button type="submit" size="sm" arrow={false} disabled={busy}>
               {busy ? 'Searching…' : 'Search and call'}
             </Button>
           </AddRow>
@@ -437,6 +459,7 @@ const SourcesPanel = ({ onNavigate }) => {
           )}
           {!manualPhone.trim() && !hasAnswers && (
             <Note style={{ marginTop: '0.8rem' }}>
+              This searches on your saved location.{' '}
               <button
                 type="button"
                 onClick={() => onNavigate?.('questions')}
@@ -444,7 +467,7 @@ const SourcesPanel = ({ onNavigate }) => {
               >
                 Answer a few questions
               </button>{' '}
-              first, or type a number above.
+              to narrow it, and to tell Khoj what to ask on the call.
             </Note>
           )}
           {!isConfigured && (

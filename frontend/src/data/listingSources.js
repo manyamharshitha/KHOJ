@@ -1,27 +1,22 @@
 /**
- * The portals the backend can actually search.
- *
- * These used to be three invented names — listings.khoj.app, citynest.example.com,
- * rentdirect.example.com — whose ids (`src-1`, `src-2`) were sent verbatim as the
- * `sites` payload. The backend has never heard of them, so a search either failed
- * with "none of those sites could be resolved" or fell through to the server
- * defaults. The panel looked configurable while controlling nothing.
+ * The portals the backend can search.
  *
  * `key` is what the API receives, and it must match a key in the backend's
  * `SITES` registry (app/scraping/sites.py).
  *
- * `readable` records what a headless browser actually gets back, measured
- * 2026-09-06 against each portal's live rent-search page. `contactGated` is the
- * field that decides whether a call can actually happen. Zolo and Colive are
- * the only two shown here — managed co-living operators publish one central
- * number on every city page, no login, because it is their own line, not an
- * individual owner's lead to protect. The five that gate the number
- * (MagicBricks, NoBroker, 99acres, Housing.com, OLX) and Stanza Living
- * (no number at all without a callback form) are not listed — they cannot be
- * searched, so listing them as an option only to fail later is worse than not
- * offering it. They still live in `GATED_SITES` below purely so typing one of
- * their names into "add a source" gets an honest explanation instead of a
- * silent, doomed attempt.
+ * `contactGated` records whether a portal hides its phone numbers behind a
+ * login. It is a property of the *call*, not of the search. Khoj reads these
+ * pages perfectly well: the rent, the locality, the size and the photos are all
+ * public, and that is most of what a person is deciding on. Only the number is
+ * withheld.
+ *
+ * These used to be excluded from this list and actively refused by "add a
+ * source", on the reasoning that a listing we cannot ring is not worth showing.
+ * That got the product backwards. Finding the flat is the service; the
+ * verification call is what happens next, and a listing with no number is still
+ * a listing the customer wants to see — they can ring it themselves. So the
+ * gated portals are offered here, switched off by default and labelled, rather
+ * than hidden and blocked.
  */
 export const defaultSources = [
   {
@@ -59,16 +54,66 @@ export const defaultSources = [
     contactGated: false,
     note: 'Managed co-living operator — one central number on every city page, no login.',
   },
-];
-
-//: Known but unusable — kept only so `findKnownSource` can explain why.
-const GATED_SITES = [
-  { key: 'magicbricks', name: 'MagicBricks', contactGated: true },
-  { key: 'nobroker', name: 'NoBroker', contactGated: true },
-  { key: '99acres', name: '99acres', contactGated: true },
-  { key: 'housing', name: 'Housing.com', contactGated: true },
-  { key: 'olx', name: 'OLX', contactGated: true },
-  { key: 'stanzaliving', name: 'Stanza Living', contactGated: true },
+  {
+    id: 'magicbricks',
+    key: 'magicbricks',
+    name: 'MagicBricks',
+    url: 'magicbricks.com',
+    enabled: false,
+    readable: true,
+    contactGated: true,
+    note: 'Listings are readable. Phone numbers sit behind a login, so Khoj cannot call these for you.',
+  },
+  {
+    id: 'nobroker',
+    key: 'nobroker',
+    name: 'NoBroker',
+    url: 'nobroker.in',
+    enabled: false,
+    readable: true,
+    contactGated: true,
+    note: 'Listings are readable. Phone numbers sit behind a login, so Khoj cannot call these for you.',
+  },
+  {
+    id: '99acres',
+    key: '99acres',
+    name: '99acres',
+    url: '99acres.com',
+    enabled: false,
+    readable: true,
+    contactGated: true,
+    note: 'Listings are readable. Phone numbers sit behind a login, so Khoj cannot call these for you.',
+  },
+  {
+    id: 'housing',
+    key: 'housing',
+    name: 'Housing.com',
+    url: 'housing.com',
+    enabled: false,
+    readable: true,
+    contactGated: true,
+    note: 'Listings are readable. Phone numbers sit behind a login, so Khoj cannot call these for you.',
+  },
+  {
+    id: 'olx',
+    key: 'olx',
+    name: 'OLX',
+    url: 'olx.in',
+    enabled: false,
+    readable: true,
+    contactGated: true,
+    note: 'Listings are readable. Phone numbers sit behind a login, so Khoj cannot call these for you.',
+  },
+  {
+    id: 'stanzaliving',
+    key: 'stanzaliving',
+    name: 'Stanza Living',
+    url: 'stanzaliving.com',
+    enabled: false,
+    readable: true,
+    contactGated: true,
+    note: 'Listings are readable. Enquiries go through a callback form rather than a published number.',
+  },
 ];
 
 //: Spellings that name a portal above without matching its `key` or `url`.
@@ -79,7 +124,7 @@ const ALIASES = {
   'magic bricks': 'magicbricks',
   'housing.com': 'housing',
   'olx.in': 'olx',
-  'zolostays': 'zolo',
+  zolostays: 'zolo',
   'zolo stays': 'zolo',
   'co live': 'colive',
   'stanza living': 'stanzaliving',
@@ -87,9 +132,11 @@ const ALIASES = {
 };
 
 /**
- * The known portal named by free text someone typed (a bare name, not a
- * pasted https:// URL), or null. Lets the "add a source" field warn about a
- * gated portal before a search runs rather than after it comes back empty.
+ * The known portal named by free text someone typed (a bare name, not a pasted
+ * https:// URL), or null.
+ *
+ * Used to tell someone what to expect from a portal they are adding — whether
+ * the numbers will be there — not to decide whether they may add it.
  */
 export function findKnownSource(raw) {
   const entry = (raw || '')
@@ -102,5 +149,5 @@ export function findKnownSource(raw) {
 
   const stem = entry.split('.')[0];
   const key = ALIASES[entry] ?? ALIASES[stem] ?? entry ?? stem;
-  return [...defaultSources, ...GATED_SITES].find((s) => s.key === key || s.key === stem) ?? null;
+  return defaultSources.find((s) => s.key === key || s.key === stem) ?? null;
 }

@@ -239,10 +239,16 @@ async def run_search(session: SearchSession) -> None:
             status=SessionStatus.RANKED.value,
             listings_found=len(listings),
             listings_matched=len(within_plan),
+            # Informational, not a failure. The listings are ranked and on
+            # screen; what is missing is the ability to ring them, which is the
+            # next step and not this one. Portals that gate their numbers are
+            # still worth searching, so the wording says what happened rather
+            # than implying the search did not work.
             error=None
             if callable_count
-            else "Listings were found, but none carried a phone number. Paste a listing "
-            "URL that shows a number, or add one by hand.",
+            else "These listings are shown, but none published a phone number — "
+            "most portals keep it behind a login. Khoj can't call these for you. "
+            "Paste a listing URL that shows a number, or add one by hand.",
         )
         log.info(
             "[%s] search done: %d found, %d matched, %d callable",

@@ -7,7 +7,16 @@
  * panel can show, never an exception thrown during render.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import * as api from './api';
 import { API_CONFIGURED, useAuthUser } from './useKhoj';
@@ -16,14 +25,28 @@ import { API_CONFIGURED, useAuthUser } from './useKhoj';
 const NOTIFICATION_POLL_MS = 20_000;
 
 /**
- * Which side of the product the account is on.
+ * The account's role, held once for the whole app.
  *
- * Renter until the server says otherwise, including while the request is in
- * flight. Guessing "broker" and correcting a moment later would flash a
- * dashboard of somebody else's calls.
+ * This is a context and not a plain hook because the role is shared state with
+ * more than one writer, and treating it as per-component state inverted the
+ * whole product. Three components call `useRole`, and each `useState` was
+ * independent: the dashboard read "broker" at mount, onboarding then wrote
+ * "renter" into its own copy and the database, and the dashboard re-rendered
+ * from the stale value it still held. Choosing "I'm looking for a place" landed
+ * the customer in the broker dashboard, with the tenant search unreachable.
+ *
+ * One state, one writer path, every reader in step.
  */
-export function useRole() {
+const RoleContext = createContext(null);
+
+/** Anything the server does not call "broker" is a renter. */
+const normalise = (raw) => (raw === 'broker' ? 'broker' : 'renter');
+
+export function RoleProvider({ children }) {
   const { ready } = useAuthUser();
+  // Renter until the server says otherwise, including while the request is in
+  // flight. Guessing "broker" and correcting a moment later would flash a
+  // dashboard of somebody else's calls.
   const [role, setRole] = useState('renter');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -35,8 +58,7 @@ export function useRole() {
     }
     setLoading(true);
     try {
-      const body = await api.getRole();
-      setRole(body?.user_type === 'broker' ? 'broker' : 'renter');
+      setRole(normalise((await api.getRole())?.user_type));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
@@ -50,12 +72,36 @@ export function useRole() {
   }, [ready, load]);
 
   const choose = useCallback(async (next) => {
+    // Applied locally before the round trip as well as after. The caller
+    // navigates on the next line, and waiting for the server would render the
+    // destination against the old role first.
+    setRole(normalise(next));
     const body = await api.setRole(next);
-    setRole(body?.user_type === 'broker' ? 'broker' : 'renter');
+    setRole(normalise(body?.user_type));
     return body;
   }, []);
 
-  return { role, isBroker: role === 'broker', loading, error, choose, reload: load };
+  const value = useMemo(
+    () => ({ role, isBroker: role === 'broker', loading, error, choose, reload: load }),
+    [role, loading, error, choose, load],
+  );
+
+  // createElement rather than JSX: this is a .js file, and Vite's esbuild
+  // loader does not transform JSX outside .jsx. One element does not justify
+  // renaming the module and rewriting every import of it.
+  return createElement(RoleContext.Provider, { value }, children);
+}
+
+export function useRole() {
+  const ctx = useContext(RoleContext);
+  if (!ctx) {
+    throw new Error(
+      'useRole must be used inside <RoleProvider>. Without it each caller keeps ' +
+        'its own copy of the role, which is how choosing "renter" during ' +
+        'onboarding left the dashboard rendering the broker view.',
+    );
+  }
+  return ctx;
 }
 
 /**
