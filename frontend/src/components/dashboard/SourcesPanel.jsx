@@ -6,7 +6,6 @@ import { LOCATION_KEY, ONBOARDING_RESULT_KEY } from '../../data/onboardingQuesti
 import { useSearchSession } from '../../lib/SearchContext';
 import { addManualListing, callAll as callAllApi } from '../../lib/api';
 import ListingAddedDialog from './ListingAddedDialog';
-import ConfirmDialog from '../ui/ConfirmDialog';
 import { useProfile } from '../../lib/useKhoj';
 import Button from '../ui/Button';
 
@@ -127,8 +126,6 @@ const SourcesPanel = ({ onNavigate }) => {
   // A search (or a manually-added number) that's ready for the go-ahead.
   // Calls are not placed as a side effect: finding/adding a number is free and
   // reversible, the call is neither.
-  const [pendingCall, setPendingCall] = useState(null);
-  const [callState, setCallState] = useState({ busy: false, error: null });
 
   const submitManual = async () => {
     setManualState({ status: 'saving', message: null });
@@ -144,15 +141,13 @@ const SourcesPanel = ({ onNavigate }) => {
       // No inline confirmation: the next step is a decision, and a line of text
       // under the form is something people scroll past. The dialog asks.
       //
-      // ListingAddedDialog rather than the pendingCall path this merged with:
-      // both open a modal, but that one offers "call / not now", and the choice
-      // that actually matters here is "call now / set the questions first".
-      // Clearing the single phone field comes from the incoming change, which
-      // replaced the multi-field form this branch was written against.
+      // This is the one place on this panel where offering a call is right: the
+      // customer has just typed a specific number, so "call it now, or set the
+      // questions first" is a real choice about a known property. It is not the
+      // same as being asked to ring an unseen search result.
       setManualState({ status: 'idle', message: null });
       setManualPhone('');
       adoptSession?.(res.session_id);
-      setCallState({ busy: false, error: null });
       setAdded({
         sessionId: res.session_id,
         phone: res.contact_number,
@@ -207,21 +202,25 @@ const SourcesPanel = ({ onNavigate }) => {
         .join(' ');
 
     const id = await startSearch({ prompt: text, city, localities, sites });
-    if (id) {
-      // Stop here and ask. Dialling used to happen automatically the moment a
-      // search finished, so a customer could ring a stranger without ever
-      // having agreed to it.
-      setCallState({ busy: false, error: null });
-      setPendingCall({ sessionId: id, prompt: text });
-    }
+
+    // Straight to the results. A search finishing used to raise "Place a
+    // verification call?" here, which asked the wrong question at the wrong
+    // moment: the customer had asked to *find* flats and was answered with a
+    // prompt to telephone one, before a single result was on screen. It was
+    // also unanswerable for a listings-only portal, where there is no number to
+    // ring — the only honest reply was "not now".
+    //
+    // Calling is a decision about one property, so it is made on that
+    // property's card in the results, where its number and its price are both
+    // visible. See ResultsPanel.
+    if (id) onNavigate?.('results');
   };
 
   /**
-   * One button, two paths: a typed number is called directly; an empty field
-   * runs the automatic search instead. Two identically-labelled "Search and
-   * call" buttons used to sit on this page doing each of these separately.
+   * One button, two paths: a typed number is added as a listing; an empty field
+   * runs the search instead.
    */
-  const searchAndCall = async (e) => {
+  const searchOrAdd = async (e) => {
     e.preventDefault();
     if (manualPhone.trim()) {
       await submitManual();
@@ -231,25 +230,6 @@ const SourcesPanel = ({ onNavigate }) => {
   };
 
   const busy = isBusy || manualState.status === 'saving';
-
-  /** Place the calls, now that the customer has said yes. */
-  const confirmCall = async () => {
-    if (!pendingCall) return;
-    setCallState({ busy: true, error: null });
-    try {
-      await callAllApi(pendingCall.sessionId, 1);
-      setPendingCall(null);
-      setCallState({ busy: false, error: null });
-      onNavigate?.('results');
-    } catch (err) {
-      // 403 is a rate limit, 402 is an exhausted plan. Both carry a message
-      // written for the customer, so it is shown rather than replaced.
-      setCallState({
-        busy: false,
-        error: err?.message || 'That call could not be placed.',
-      });
-    }
-  };
 
   /**
    * The two answers to "listing added, now what?".
@@ -280,14 +260,6 @@ const SourcesPanel = ({ onNavigate }) => {
   const askQuestionsFirst = () => {
     setAdded(null);
     onNavigate?.('questions');
-  };
-
-  /** Keep the results, skip the calls. */
-  const cancelCall = () => {
-    const target = pendingCall;
-    setPendingCall(null);
-    setCallState({ busy: false, error: null });
-    if (target) onNavigate?.('results');
   };
 
   const toggleSource = (id) =>
@@ -407,41 +379,19 @@ const SourcesPanel = ({ onNavigate }) => {
         />
       )}
 
-      <ConfirmDialog
-        open={Boolean(pendingCall)}
-        title="Place a verification call?"
-        confirmLabel="Yes, call now"
-        cancelLabel="Not now"
-        busy={callState.busy}
-        onConfirm={confirmCall}
-        onCancel={cancelCall}
-      >
-        <p style={{ margin: '0 0 0.7rem' }}>
-          Khoj will phone the owner or broker for the best match it found, say it is an AI
-          assistant calling for you, and ask permission to record.
-        </p>
-        <p style={{ margin: '0 0 0.7rem' }}>
-          This is a <strong>real phone call to a real person</strong> and it uses one of your
-          daily verifications. It cannot be undone once it starts.
-        </p>
-        {callState.error && (
-          <p style={{ margin: 0, color: '#b3261e' }}>{callState.error}</p>
-        )}
-      </ConfirmDialog>
-
       <Note>Custom sources are checked the same way as our defaults — no extra setup on your end.</Note>
 
       <PanelHead style={{ marginTop: '2.4rem' }}>
-        <Kicker>Search and call</Kicker>
-        <Title>Have a number, or search?</Title>
+        <Kicker>Add a listing</Kicker>
+        <Title>Already have a number?</Title>
         <Sub>
-          Type in a number you already have and Khoj calls it directly. Leave it blank and Khoj
-          searches your enabled sources instead, using the questions you've already answered.
+          Type a number you already have and Khoj adds it as a listing you can verify. Leave it
+          blank and Khoj searches your enabled sources instead.
         </Sub>
       </PanelHead>
 
       <Card>
-        <form onSubmit={searchAndCall}>
+        <form onSubmit={searchOrAdd}>
           <AddRow as="div">
             <TextInput
               placeholder="Have a number? Type it — 10 digits, or +91… (optional)"
@@ -450,7 +400,7 @@ const SourcesPanel = ({ onNavigate }) => {
               aria-label="Phone number"
             />
             <Button type="submit" size="sm" arrow={false} disabled={busy}>
-              {busy ? 'Searching…' : 'Search and call'}
+              {busy ? 'Working…' : manualPhone.trim() ? 'Add this listing' : 'Search properties'}
             </Button>
           </AddRow>
 

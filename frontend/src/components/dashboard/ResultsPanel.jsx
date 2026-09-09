@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 
-import { streamAboutListing } from '../../lib/api';
+import { callAll, streamAboutListing } from '../../lib/api';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, Badge, TextInput } from './dashboardUI';
 import { STATUS_META } from '../../data/callRuns';
 import { useResults } from '../../lib/useKhoj';
 import Button from '../ui/Button';
+import ConfirmDialog from '../ui/ConfirmDialog';
 
 const Chips = styled.div`
   display: flex;
@@ -262,6 +263,21 @@ const statusFor = {
   Dead: 'dead',
 };
 
+const CallRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin: 0 0 1rem;
+
+  span {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: ${({ theme }) => theme.muted};
+    font-family: 'IBM Plex Mono', monospace;
+  }
+`;
+
 const CallError = styled.p`
   font-size: 0.8rem;
   line-height: 1.55;
@@ -292,9 +308,38 @@ const ResultsPanel = ({ sessionId = null }) => {
   const [drafts, setDrafts] = useState({});
   const [pending, setPending] = useState({});
 
+  // The listing the customer is being asked to confirm a call for, and the
+  // outcome of the last attempt. Held here rather than in Sources because a
+  // call is a decision about one property, not about a search.
+  const [verifying, setVerifying] = useState(null);
+  const [calling, setCalling] = useState({ id: null, error: null });
+
   // Live results when a session is open and the backend is reachable, and an
   // empty list otherwise — there is no sample set to fall back to any more.
-  const { runs: rawRuns, isLive, loading, error } = useResults(sessionId);
+  const { runs: rawRuns, isLive, loading, error, reload } = useResults(sessionId);
+
+  /** Place the call, now that the customer has said yes to this property. */
+  const confirmCall = async () => {
+    const target = verifying;
+    if (!target) return;
+    setCalling({ id: target.id, error: null });
+    try {
+      await callAll(sessionId, 1);
+      setVerifying(null);
+      setCalling({ id: null, error: null });
+      // The row goes to DIALING server-side; pull it now rather than waiting
+      // for the next poll so the badge changes as the dialog closes.
+      void reload();
+    } catch (err) {
+      // 403 is a rate limit, 402 an exhausted plan. Both carry a message
+      // written for the customer, so it is shown rather than replaced.
+      setVerifying(null);
+      setCalling({
+        id: target.id,
+        error: err?.message || 'That call could not be placed.',
+      });
+    }
+  };
 
   // Never trust the shape at the render boundary. One undefined reaching a
   // `.map` here throws during render, and a throw during render is a white
@@ -485,6 +530,40 @@ const ResultsPanel = ({ sessionId = null }) => {
                       separates "no API key" from "wrong number". */}
                   {run.error && <CallError>{run.error}</CallError>}
 
+                  {/* The verification call is offered here and nowhere else.
+                      It is a decision about one property, and this is the only
+                      place the price, the source and the number are all in
+                      front of the customer at the moment they make it.
+
+                      A listing from a portal that hides its numbers simply has
+                      no button: there is nothing to ring, and an enabled
+                      control that can only fail is worse than none. */}
+                  {run.status === 'pending' && (
+                    <CallRow>
+                      {run.broker?.phone ? (
+                        <>
+                          <Button
+                            size="sm"
+                            arrow={false}
+                            disabled={calling.id === run.id}
+                            onClick={() => setVerifying(run)}
+                          >
+                            {calling.id === run.id ? 'Starting…' : 'Verify by phone'}
+                          </Button>
+                          <span>{run.broker.phone}</span>
+                        </>
+                      ) : (
+                        <span>
+                          No published number — this portal keeps them behind a login, so Khoj
+                          cannot call this one for you.
+                        </span>
+                      )}
+                    </CallRow>
+                  )}
+                  {calling.error && calling.id === run.id && (
+                    <CallError>{calling.error}</CallError>
+                  )}
+
                   {answers.length > 0 ? (
                     <QA>
                       {answers.map((qa, i) => (
@@ -553,6 +632,29 @@ const ResultsPanel = ({ sessionId = null }) => {
           </RunCard>
         );
       })}
+
+      {/* Named, priced and sourced. Asking "call this one?" is answerable here
+          in a way it never was on the Sources panel, where the question arrived
+          before any result existed. */}
+      <ConfirmDialog
+        open={Boolean(verifying)}
+        title="Place a verification call?"
+        confirmLabel="Yes, call now"
+        cancelLabel="Not now"
+        busy={Boolean(calling.id) && !calling.error}
+        onConfirm={confirmCall}
+        onCancel={() => setVerifying(null)}
+      >
+        <p style={{ margin: '0 0 0.7rem' }}>
+          Khoj will phone <strong>{verifying?.broker?.phone}</strong> about{' '}
+          <strong>{verifying?.address}</strong>, say it is an AI assistant calling for you, and
+          ask permission to record.
+        </p>
+        <p style={{ margin: 0 }}>
+          This is a <strong>real phone call to a real person</strong> and it uses one of your
+          daily verifications. It cannot be undone once it starts.
+        </p>
+      </ConfirmDialog>
     </div>
   );
 };
