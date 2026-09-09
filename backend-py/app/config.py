@@ -112,7 +112,13 @@ class Settings(BaseSettings):
     calle_api_key: str = ""
     calle_base_url: str = "https://api.heycall-e.com"
     #: HTTP timeout for a single SDK request, not for the call itself.
-    calle_http_timeout: float = 30.0
+    #:
+    #: Strict on purpose. This bounds one request — creating the task, or one
+    #: poll — none of which should take seconds. A slack default here is how an
+    #: unreachable API turns into a call row wedged at DIALING rather than a
+    #: failure the customer can read. The length of the *conversation* is
+    #: governed by ``calle_timeout_seconds``, which is measured in minutes.
+    calle_http_timeout: float = 10.0
     #: How long to wait for a call to reach a terminal state, and how often to
     #: poll while waiting.
     calle_timeout_seconds: float = 600.0

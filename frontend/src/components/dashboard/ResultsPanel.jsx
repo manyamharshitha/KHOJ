@@ -252,8 +252,26 @@ const formatDate = (value) => {
   });
 };
 
-const filters = ['All', 'Completed', 'Scheduled', 'No answer', 'Dead'];
-const statusFor = { All: null, Completed: 'completed', Scheduled: 'scheduled', 'No answer': 'no-answer', Dead: 'dead' };
+const filters = ['All', 'Completed', 'Scheduled', 'No answer', 'Failed', 'Dead'];
+const statusFor = {
+  All: null,
+  Completed: 'completed',
+  Scheduled: 'scheduled',
+  'No answer': 'no-answer',
+  Failed: 'failed',
+  Dead: 'dead',
+};
+
+const CallError = styled.p`
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: ${({ theme }) => theme.bad};
+  background: ${({ theme }) => theme.badSoft};
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  margin: 0 0 1rem;
+  word-break: break-word;
+`;
 
 const ResultsEmpty = styled.div`
   text-align: center;
@@ -418,9 +436,10 @@ const ResultsPanel = ({ sessionId = null }) => {
 
       {visible.map((run) => {
         // A status the backend adds later — or one this build has not heard
-        // of — is a missing key, and `meta.tone` on undefined throws. Scheduled
-        // is the honest reading of "known about, nothing has happened yet".
-        const meta = STATUS_META[run.status] ?? STATUS_META.scheduled;
+        // of — is a missing key, and `meta.tone` on undefined throws. Pending is
+        // the honest reading of "known about, nothing has happened yet";
+        // `scheduled` would promise a call is queued that may not be.
+        const meta = STATUS_META[run.status] ?? STATUS_META.pending;
         const open = openId === run.id;
         const when = formatDate(run.date);
         const answers = Array.isArray(run.answers) ? run.answers : [];
@@ -460,6 +479,11 @@ const ResultsPanel = ({ sessionId = null }) => {
                       </span>
                     )}
                   </MetaLine>
+
+                  {/* Why nothing happened, in the pipeline's own words. A
+                      failure badge with no reason is a dead end — this is what
+                      separates "no API key" from "wrong number". */}
+                  {run.error && <CallError>{run.error}</CallError>}
 
                   {answers.length > 0 ? (
                     <QA>

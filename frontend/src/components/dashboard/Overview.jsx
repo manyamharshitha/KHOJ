@@ -82,10 +82,10 @@ const STATUS_KEY = {
   dialing: 'calling',
   in_progress: 'calling',
   no_answer: 'no-answer',
-  busy: 'no-answer',
-  failed: 'no-answer',
-  cancelled: 'no-answer',
-  blocked: 'no-answer',
+  busy: 'busy',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  blocked: 'blocked',
 };
 
 const Overview = ({ onNavigate, profile }) => {

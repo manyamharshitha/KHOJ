@@ -591,12 +591,24 @@ async def listings_by_ids(listing_ids: list[str]) -> dict[str, Listing]:
 # --------------------------------------------------------------------------
 
 
+#: Statuses that never reached the telephone network, and so never spent an
+#: allowance. BLOCKED is refused at the cooldown; FAILED is a call that could not
+#: be placed at all — no API key, a provider that rejected the payload, a worker
+#: that crashed before dialling.
+#:
+#: FAILED belongs here for the same reason BLOCKED does, and leaving it out was
+#: expensive: the free plan allows two calls in total, so two misconfigured
+#: attempts locked an account out of the product permanently, having never rung
+#: a single telephone. An allowance is spent by reaching someone, not by trying.
+_NEVER_DIALLED = [CallStatus.BLOCKED.value, CallStatus.FAILED.value]
+
+
 async def count_calls_since(uid: str, since: datetime) -> int:
     """Calls this account has placed since ``since``.
 
     Counted from the calls themselves rather than a counter on the user, so a
     crash between "dial" and "increment" cannot hand out a free call. Attempts
-    that were blocked before dialling do not count — being refused is not using
+    that never reached the network do not count — being refused is not using
     your allowance.
     """
     if not uid or uid in ("anonymous", "usr_dev"):
@@ -605,7 +617,7 @@ async def count_calls_since(uid: str, since: datetime) -> int:
         {
             "customer_id": uid,
             "created_at": {"$gte": since},
-            "call_status": {"$nin": [CallStatus.BLOCKED.value]},
+            "call_status": {"$nin": _NEVER_DIALLED},
         }
     )
 
@@ -615,7 +627,7 @@ async def count_calls_ever(uid: str) -> int:
     if not uid or uid in ("anonymous", "usr_dev"):
         return 0
     return await get_db()[CALLS].count_documents(
-        {"customer_id": uid, "call_status": {"$nin": [CallStatus.BLOCKED.value]}}
+        {"customer_id": uid, "call_status": {"$nin": _NEVER_DIALLED}}
     )
 
 

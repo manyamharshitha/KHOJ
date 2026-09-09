@@ -257,7 +257,14 @@ def _tri(value: Any) -> bool | None:
 
 
 def _map_status(task: dict[str, Any], attempt: dict[str, Any] | None) -> CallStatus:
-    """CALL-E's lifecycle onto ours."""
+    """CALL-E's lifecycle onto ours.
+
+    NO_ANSWER is reserved for a telephone that genuinely rang and was not picked
+    up. It is not the fallback for "we cannot tell", because those two look
+    identical on screen and only one of them means the number was ever dialled —
+    a provider that rejected the task outright was being reported to the
+    customer as a broker who did not answer.
+    """
     status = str(task.get("status") or "")
     turns = (attempt or {}).get("transcript_turns") or []
 
@@ -266,12 +273,22 @@ def _map_status(task: dict[str, Any], attempt: dict[str, Any] | None) -> CallSta
     if status == "canceled":
         return CallStatus.CANCELLED
 
-    code = str((attempt or {}).get("failure_code") or task.get("failure_code") or "").lower()
-    if any(k in code for k in ("no_answer", "noanswer", "timeout")):
+    # No attempt at all means CALL-E never took the task as far as dialling.
+    # Whatever went wrong, the phone did not ring.
+    if attempt is None:
+        return CallStatus.FAILED
+
+    code = str(attempt.get("failure_code") or task.get("failure_code") or "").lower()
+    if any(k in code for k in ("no_answer", "noanswer")):
         return CallStatus.NO_ANSWER
     if "busy" in code:
         return CallStatus.BUSY
     if any(k in code for k in ("decline", "reject")):
+        return CallStatus.FAILED
+    # A timeout is ours, not theirs: the poll gave up, and whether anyone would
+    # have answered is unknown. Reporting it as NO_ANSWER asserts something
+    # about the person on the other end that was never observed.
+    if "timeout" in code:
         return CallStatus.FAILED
     # A completed task with no transcript connected to nothing useful.
     return CallStatus.NO_ANSWER if status == "completed" else CallStatus.FAILED
@@ -419,9 +436,48 @@ class CalleDialer:
 
         from calle import CalleAPIError, CalleTimeoutError
 
+        # A deadline of our own, above the one handed to the SDK.
+        #
+        # `create_and_wait` polls on a background thread, and `asyncio.to_thread`
+        # cannot be cancelled — if that thread blocks and never returns, the
+        # await here never completes either. Nothing downstream runs, no status
+        # is written, and the row sits at DIALING forever while the dashboard
+        # says "Calling now" about a telephone that is not ringing.
+        #
+        # `wait_for` does not kill the thread (Python cannot), but it hands
+        # control back so the failure is recorded and the customer is told. The
+        # margin is generous: this must only ever fire when the SDK has ignored
+        # its own `timeout_seconds`, never on a call that is legitimately long.
+        deadline = settings.calle_timeout_seconds + 60.0
+
+        log.info(
+            "[%s] dialling %s via CALL-E (call timeout %.0fs, http timeout %.0fs)",
+            call_id,
+            phone,
+            settings.calle_timeout_seconds,
+            settings.calle_http_timeout,
+        )
+
         try:
-            task_result: dict[str, Any] = await asyncio.to_thread(
-                self._client.calls.create_and_wait, **payload
+            task_result: dict[str, Any] = await asyncio.wait_for(
+                asyncio.to_thread(self._client.calls.create_and_wait, **payload),
+                timeout=deadline,
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            log.error(
+                "[%s] CALL-E did not return within %.0fs — abandoning the wait. "
+                "The SDK ignored its own timeout_seconds; the worker thread may "
+                "still be running.",
+                call_id,
+                deadline,
+            )
+            return CallOutcome(
+                provider_call_id="",
+                status=CallStatus.FAILED,
+                error=(
+                    f"CALL-E did not respond within {deadline:.0f}s. The call was "
+                    "abandoned; it may or may not have been placed."
+                ),
             )
         except CalleTimeoutError as exc:
             log.warning("[%s] CALL-E timed out: %s", call_id, exc)
@@ -439,7 +495,15 @@ class CalleDialer:
                 provider_call_id="", status=CallStatus.FAILED, error=str(exc)[:400]
             )
 
-        return self._read_outcome(task_result, criteria)
+        outcome = self._read_outcome(task_result, criteria)
+        log.info(
+            "[%s] CALL-E returned status=%s provider_id=%s turns=%d",
+            call_id,
+            outcome.status.value,
+            outcome.provider_call_id or "<none>",
+            len(outcome.transcript),
+        )
+        return outcome
 
     def _read_outcome(self, task: dict[str, Any], criteria: SearchCriteria) -> CallOutcome:
         """Translate one CALL-E task into our shape.

@@ -11,17 +11,28 @@
  * established renders as "not answered", not as a plausible-looking blank.
  */
 
-/** Backend call_status → the status keys `STATUS_META` already knows. */
+/**
+ * Backend call_status → the status keys `STATUS_META` already knows.
+ *
+ * `failed`, `blocked` and `cancelled` used to collapse into `no-answer`
+ * alongside a genuine unanswered ring. They are not the same event and saying
+ * so was actively misleading: a call that never left the building — no API key,
+ * a provider that refused the payload, a number still inside its cooldown —
+ * was reported to the customer as a broker who did not pick up. She would
+ * conclude the landlord was unreachable when in fact her phone never dialled.
+ *
+ * `no-answer` now means only what it says: it rang, nobody answered.
+ */
 const STATUS_MAP = {
   completed: 'completed',
   queued: 'scheduled',
   dialing: 'calling',
   in_progress: 'calling',
   no_answer: 'no-answer',
-  busy: 'no-answer',
-  failed: 'no-answer',
-  cancelled: 'no-answer',
-  blocked: 'no-answer',
+  busy: 'busy',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  blocked: 'blocked',
 };
 
 /**
@@ -143,6 +154,11 @@ export function toRunCard(result) {
     })),
     audioUrl: call?.audio_url ?? null,
     recordingConsent: call?.consent_to_record ?? null,
+
+    // Why the call did not happen, in the provider's or the pipeline's own
+    // words. Without this the customer sees a failure badge and has no way to
+    // tell a missing API key from a wrong number.
+    error: call?.error ?? null,
   };
 }
 

@@ -24,7 +24,8 @@ from app.models import (
     TargetSite,
     utcnow,
 )
-from app.pipeline import reserve_calls
+from app.pipeline import abandon_reserved, reserve_calls, run_calls
+from app.telephony.calle_dialer import _map_status
 
 pytestmark = pytest.mark.usefixtures("mongo_db")
 
@@ -131,3 +132,137 @@ async def test_number_inside_its_cooldown_reserves_as_blocked(
     _, call = reserved[0]
     assert call.call_status is CallStatus.BLOCKED
     assert (await repo.get_call(call.id)).call_status is CallStatus.BLOCKED
+
+
+# --------------------------------------------------------------------------
+# a reservation that will not be honoured must say so
+# --------------------------------------------------------------------------
+
+
+async def test_abandon_marks_reserved_rows_failed_with_a_reason() -> None:
+    """A row left at DIALING shows as "Calling now" for a call that never rang."""
+    session = a_session()
+    await repo.create_session(session)
+    await repo.save_listings([a_listing("lst_1")])
+    reserved = await reserve_calls(session, limit=1)
+
+    await abandon_reserved(reserved, "CALLE_API_KEY is not set.")
+
+    stored = await repo.get_call(reserved[0][1].id)
+    assert stored.call_status is CallStatus.FAILED
+    assert "CALLE_API_KEY" in stored.error
+
+
+async def test_abandon_leaves_a_blocked_row_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BLOCKED already carries a more specific reason than the generic one."""
+    monkeypatch.setattr(settings, "bypass_call_window", False)
+    from app.models import CallLog
+
+    session = a_session()
+    await repo.create_session(session)
+    await repo.save_listings([a_listing("lst_1")])
+    await repo.create_call(
+        CallLog(
+            id="cal_prev",
+            session_id="ses_old",
+            listing_id="lst_old",
+            phone_dialed="+919000000001",
+            call_status=CallStatus.COMPLETED,
+            started_at=utcnow(),
+            created_at=utcnow(),
+        )
+    )
+    reserved = await reserve_calls(session, limit=1)
+
+    await abandon_reserved(reserved, "some unrelated reason")
+
+    assert (await repo.get_call(reserved[0][1].id)).call_status is CallStatus.BLOCKED
+
+
+async def test_outside_the_window_fails_the_rows_rather_than_orphaning_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The early return used to leave DIALING rows nobody would ever touch."""
+    monkeypatch.setattr(settings, "ignore_call_window", False)
+    monkeypatch.setattr(settings, "bypass_call_window", False)
+    monkeypatch.setattr("app.pipeline.inside_calling_window", lambda *a, **k: False)
+
+    session = a_session()
+    await repo.create_session(session)
+    await repo.save_listings([a_listing("lst_1")])
+    reserved = await reserve_calls(session, limit=1)
+
+    await run_calls("ses_call", limit=1, reserved=reserved)
+
+    stored = await repo.get_call(reserved[0][1].id)
+    assert stored.call_status is CallStatus.FAILED
+    assert "calling hours" in stored.error
+
+
+# --------------------------------------------------------------------------
+# NO_ANSWER means it rang and nobody picked up — nothing else
+# --------------------------------------------------------------------------
+
+
+def test_task_that_never_reached_an_attempt_is_failed_not_no_answer() -> None:
+    assert _map_status({"status": "completed"}, None) is CallStatus.FAILED
+
+
+def test_poll_timeout_is_failed_not_no_answer() -> None:
+    status = _map_status({"status": "failed"}, {"failure_code": "poll_timeout"})
+    assert status is CallStatus.FAILED
+
+
+def test_a_real_unanswered_ring_is_still_no_answer() -> None:
+    status = _map_status({"status": "failed"}, {"failure_code": "no_answer"})
+    assert status is CallStatus.NO_ANSWER
+
+
+# --------------------------------------------------------------------------
+# a call that never rang must not spend the allowance
+# --------------------------------------------------------------------------
+
+
+async def _a_call(call_id: str, status: CallStatus, uid: str = "usr_quota") -> None:
+    from app.models import CallLog
+
+    await repo.create_call(
+        CallLog(
+            id=call_id,
+            session_id="ses_quota",
+            customer_id=uid,
+            listing_id=f"lst_{call_id}",
+            phone_dialed="+919000000009",
+            call_status=status,
+            started_at=utcnow(),
+            created_at=utcnow(),
+        )
+    )
+
+
+async def test_failed_calls_do_not_spend_the_lifetime_allowance() -> None:
+    """Two misconfigured attempts used to exhaust the free plan permanently."""
+    await _a_call("cal_f1", CallStatus.FAILED)
+    await _a_call("cal_f2", CallStatus.FAILED)
+    await _a_call("cal_b1", CallStatus.BLOCKED)
+
+    assert await repo.count_calls_ever("usr_quota") == 0
+
+
+async def test_completed_calls_still_spend_the_lifetime_allowance() -> None:
+    await _a_call("cal_ok", CallStatus.COMPLETED)
+    await _a_call("cal_na", CallStatus.NO_ANSWER)
+    await _a_call("cal_bad", CallStatus.FAILED)
+
+    # A ring nobody picked up did reach the network, so it counts; the failure
+    # did not.
+    assert await repo.count_calls_ever("usr_quota") == 2
+
+
+async def test_failed_calls_do_not_spend_the_daily_allowance() -> None:
+    from datetime import timedelta
+
+    await _a_call("cal_d1", CallStatus.FAILED)
+    since = utcnow() - timedelta(days=1)
+
+    assert await repo.count_calls_since("usr_quota", since) == 0

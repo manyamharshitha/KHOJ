@@ -270,6 +270,25 @@ async def reserve_calls(
     return reserved
 
 
+async def abandon_reserved(
+    reserved: list[tuple[Listing, CallLog]] | None, reason: str
+) -> None:
+    """Close out rows that were reserved but will never be dialled.
+
+    Every early return below happens *after* the endpoint has already written
+    DIALING rows. Returning without touching them stranded the call on screen
+    as "Calling now" forever — the customer watched a phone that was never going
+    to ring. A reservation that is not going to be honoured has to say so.
+    """
+    for _, call in reserved or []:
+        if call.call_status is CallStatus.BLOCKED:
+            continue  # already terminal, and its own reason is more specific
+        call.call_status = CallStatus.FAILED
+        call.error = reason[:400]
+        call.ended_at = utcnow()
+        await save_call(call)
+
+
 async def run_calls(
     session_id: str,
     limit: int | None = None,
@@ -286,14 +305,19 @@ async def run_calls(
     """
     session = await get_session(session_id)
     if session is None:
+        await abandon_reserved(reserved, f"Search {session_id} no longer exists.")
         return
 
     if not inside_calling_window():
-        await update_session(
-            session_id,
-            status=SessionStatus.RANKED.value,
-            error="Outside calling hours (11:00-13:00 and 17:00-20:00 IST). Nothing was dialled.",
+        reason = (
+            "Outside calling hours (11:00-13:00 and 17:00-20:00 IST). Nothing was dialled. "
+            "Set BYPASS_CALL_WINDOW=true to dial outside these hours while testing."
         )
+        await abandon_reserved(reserved, reason)
+        await update_session(
+            session_id, status=SessionStatus.RANKED.value, error=reason
+        )
+        log.warning("[%s] outside the calling window — nothing dialled", session_id)
         return
 
     # Read the plan again here rather than trusting the number from ranking: a
@@ -304,6 +328,7 @@ async def run_calls(
     quota = Quota(tier=tier, limit=plan_limit, used=used)
 
     if quota.exhausted:
+        await abandon_reserved(reserved, quota.message())
         await update_session(
             session_id, status=SessionStatus.COMPLETE.value, error=quota.message()
         )
@@ -325,10 +350,28 @@ async def run_calls(
     await set_session_status(session_id, SessionStatus.CALLING)
     log.info("[%s] calling %d listing(s)", session_id, len(reserved))
 
-    await asyncio.gather(
+    # `return_exceptions=True` collects failures instead of raising them, so
+    # anything _call_one throws lands here as a value and is otherwise dropped
+    # on the floor — the row stays DIALING and the customer is told a call is
+    # ringing that already crashed. Each result is inspected and written down.
+    results = await asyncio.gather(
         *(_call_one(session, listing, call) for listing, call in reserved),
         return_exceptions=True,
     )
+    for (_, call), result in zip(reserved, results, strict=True):
+        if not isinstance(result, BaseException):
+            continue
+        log.exception(
+            "[%s] call %s crashed while dialling %s",
+            session_id,
+            call.id,
+            call.phone_dialed,
+            exc_info=result,
+        )
+        call.call_status = CallStatus.FAILED
+        call.error = f"{type(result).__name__}: {result}"[:400]
+        call.ended_at = utcnow()
+        await save_call(call)
 
     session = await get_session(session_id)
     await update_session(
@@ -347,6 +390,19 @@ def build_dialer():  # type: ignore[no-untyped-def]
     """
     if settings.telephony_provider == "calle":
         return CalleDialer()
+
+    # TELEPHONY_PROVIDER defaults to "mock", so forgetting to set it on a
+    # deployed host is silent: the mock returns a fabricated transcript and a
+    # COMPLETED status without touching the telephone network. Nobody's phone
+    # rings and the dashboard shows a finished verification. That is the single
+    # most misleading state this system can reach, so it is said out loud on
+    # every call rather than once at startup.
+    log.warning(
+        "TELEPHONY_PROVIDER=%s — using the MOCK dialer. No real call is placed and the "
+        "transcript is fabricated. Set TELEPHONY_PROVIDER=calle with CALLE_API_KEY to "
+        "dial for real.",
+        settings.telephony_provider,
+    )
     return MockDialer()
 
 
