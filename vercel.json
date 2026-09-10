@@ -6,25 +6,6 @@
   "framework": "vite",
   "rewrites": [
     {
-      "//": [
-        "Firebase's auth handler, served from our own origin.",
-        "",
-        "Sign-in runs through https://<authDomain>/__/auth/handler, and by",
-        "default that authDomain is khoj-cd80b.firebaseapp.com — a different",
-        "site from this one. Firebase then has to keep the in-flight sign-in in",
-        "storage belonging to firebaseapp.com, which is third-party storage from",
-        "this page's point of view, and Chrome and Safari block it. The redirect",
-        "goes to Google, comes back, and getRedirectResult finds nothing: the",
-        "person is returned to the app still signed out, with no error anywhere.",
-        "",
-        "Proxying the handler makes the auth domain this domain. The storage",
-        "stops being third-party, the redirect completes, and a popup would also",
-        "end same-origin — which is what made window.closed unreadable and",
-        "produced the COOP warnings.",
-        "",
-        "MUST come before the SPA catch-all below, which would otherwise answer",
-        "these paths with index.html. Vercel matches rewrites in order."
-      ],
       "source": "/__/auth/:path*",
       "destination": "https://khoj-cd80b.firebaseapp.com/__/auth/:path*"
     },

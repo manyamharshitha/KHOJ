@@ -78,7 +78,51 @@ async function authHeader() {
  */
 const REQUEST_TIMEOUT_MS = 60_000;
 
-async function request(path, { method = 'GET', body, signal, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+/**
+ * Statuses worth trying again, and how many times.
+ *
+ * A single-worker instance that restarts — a deploy, a memory spike, the
+ * platform moving it — answers 502/503/504 from its edge for a few seconds.
+ * Those responses never reach the application, so they carry no CORS headers,
+ * and the browser reports the whole thing as "blocked by CORS policy: No
+ * 'Access-Control-Allow-Origin' header". That message sends people hunting a
+ * CORS bug when the server was simply not there for a moment.
+ *
+ * A poll that fails once inside a twenty-second restart window is not news.
+ */
+const RETRY_STATUSES = new Set([502, 503, 504]);
+const RETRY_ATTEMPTS = 3;
+const RETRY_BASE_MS = 400;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function request(path, options = {}) {
+  // GET only. A retried POST could place a second verification call, add a
+  // second listing, or start a second search — the failure modes here are
+  // measured in phone calls to strangers, so anything that changes state is
+  // attempted exactly once and its error reported honestly.
+  const idempotent = (options.method ?? 'GET') === 'GET';
+  let lastError;
+
+  for (let attempt = 1; attempt <= (idempotent ? RETRY_ATTEMPTS : 1); attempt += 1) {
+    try {
+      return await attemptRequest(path, options);
+    } catch (err) {
+      lastError = err;
+      const worthRetrying = err?.status === 0 || RETRY_STATUSES.has(err?.status);
+      if (!worthRetrying || attempt === RETRY_ATTEMPTS) break;
+      // Backs off so three attempts span roughly a second and a half rather
+      // than hammering an instance that is already struggling.
+      await sleep(RETRY_BASE_MS * attempt);
+    }
+  }
+  throw lastError;
+}
+
+async function attemptRequest(
+  path,
+  { method = 'GET', body, signal, timeoutMs = REQUEST_TIMEOUT_MS } = {},
+) {
   // A caller's own signal still wins; this only adds a deadline on top of it.
   const controller = new AbortController();
   const onAbort = () => controller.abort();
