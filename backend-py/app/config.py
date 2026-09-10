@@ -61,8 +61,14 @@ class Settings(BaseSettings):
     #: Pool sizing. A verification call holds a coroutine open for minutes while
     #: CALL-E talks, so connections are held longer than a typical request/response
     #: service and the floor is kept above zero to avoid reconnect churn.
-    mongo_max_pool_size: int = 50
-    mongo_min_pool_size: int = 2
+    #: Sized for a 512MB instance, not for the throughput the driver would
+    #: happily give. Fifty pooled connections is a large multiple of what a
+    #: single uvicorn worker can have in flight, and each one costs memory and a
+    #: socket on a box that also has to hold Chromium — which the kernel resolves
+    #: by killing the process, at which point the platform answers 503 and the
+    #: browser reports it as a CORS failure.
+    mongo_max_pool_size: int = 5
+    mongo_min_pool_size: int = 1
     #: Fast-fail rather than the driver's 30s default. A cluster that is
     #: unreachable should surface in a health check in a few seconds, not hang a
     #: request until a proxy gives up first.

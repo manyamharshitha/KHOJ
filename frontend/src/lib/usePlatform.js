@@ -19,6 +19,7 @@ import {
 } from 'react';
 
 import * as api from './api';
+import { isServerUnwell, nextInterval } from './backoff';
 import { API_CONFIGURED, useAuthUser } from './useKhoj';
 
 /** How often the bell re-checks. Deliberately slow: a notification is not a chat token. */
@@ -118,6 +119,8 @@ export function useNotifications() {
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState(null);
   const timer = useRef(null);
+  const failures = useRef(0);
+  const [tick, setTick] = useState(0);
 
   const load = useCallback(async () => {
     if (!API_CONFIGURED) return;
@@ -126,19 +129,31 @@ export function useNotifications() {
       setItems(Array.isArray(body?.notifications) ? body.notifications : []);
       setUnread(Number.isFinite(body?.unread) ? body.unread : 0);
       setError(null);
+      failures.current = 0;
     } catch (err) {
       // Quiet on purpose. A bell that cannot reach the server should go still,
       // not throw a banner over whatever the customer was doing.
+      if (isServerUnwell(err)) failures.current += 1;
       setError(err instanceof Error ? err : new Error(String(err)));
     }
   }, []);
 
+  // Rescheduled rather than fixed, so the bell stops adding to the load on a
+  // server that is failing. Of all the pollers in the app this is the one with
+  // least claim on a struggling backend: nobody is waiting on a notification
+  // count the way they wait on a search or a call.
   useEffect(() => {
     if (!ready) return undefined;
-    void load();
-    timer.current = setInterval(() => void load(), NOTIFICATION_POLL_MS);
-    return () => clearInterval(timer.current);
-  }, [ready, load]);
+
+    const delay = nextInterval(failures.current, NOTIFICATION_POLL_MS);
+    if (delay === null) return undefined; // circuit open: the bell goes still
+
+    timer.current = setTimeout(async () => {
+      await load();
+      setTick((n) => n + 1);
+    }, delay);
+    return () => clearTimeout(timer.current);
+  }, [ready, load, tick]);
 
   const markRead = useCallback(
     async (id) => {

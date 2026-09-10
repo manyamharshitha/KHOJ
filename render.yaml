@@ -17,7 +17,13 @@ services:
     # dies on "permission denied" is a poor reward for fixing the browser.
     buildCommand: bash ./build.sh
 
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # One worker, stated rather than inherited. Render derives WEB_CONCURRENCY
+    # from the CPU count, and a second worker would double every resident cost
+    # on a 512MB box — the Motor pool, the model clients, and a Chromium the
+    # crawler may launch. The instance is then OOM-killed, the platform answers
+    # 503 with no CORS headers, and the browser reports a CORS error for a
+    # process that is simply dead.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /health
 
     envVars:

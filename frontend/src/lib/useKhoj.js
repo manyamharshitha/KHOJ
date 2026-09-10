@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 
 import { auth, isFirebaseConfigured } from '../firebase';
+import { isServerUnwell, nextInterval } from './backoff';
 import * as api from './api';
 import { toDashboard, toQuota, toRunCards } from './adapters';
 
@@ -99,6 +100,11 @@ export function useResults(sessionId, { active = false } = {}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Consecutive failures, for the backoff below. A ref rather than state: it
+  // must not itself trigger a render, and the interval effect reads it when it
+  // reschedules.
+  const failures = useRef(0);
+
   const load = useCallback(async () => {
     // Nothing to show is shown as nothing.
     //
@@ -132,13 +138,18 @@ export function useResults(sessionId, { active = false } = {}) {
       setRuns(cards);
       setIsLive(true);
       setError(null);
+      failures.current = 0;
     } catch (err) {
       // A failed fetch is an error, not an empty result. Saying so lets the
       // panel offer a retry instead of implying the search found nothing.
       // Normalised to an Error so `error.message` is always reachable: a
       // rejected promise can carry a string, and a string has no `.message`.
+      if (isServerUnwell(err)) failures.current += 1;
       setError(err instanceof Error ? err : new Error(String(err)));
-      setRuns([]);
+      // The previous results are kept. Blanking the list because one poll
+      // failed tells the customer her results are gone when the server merely
+      // hiccuped, and they reappear a few seconds later — which reads as the
+      // product losing data.
       setIsLive(false);
     } finally {
       setLoading(false);
@@ -164,16 +175,27 @@ export function useResults(sessionId, { active = false } = {}) {
   // soon as neither is true, so a settled result set costs nothing.
   const inFlight = runs.some((r) => r.status === 'calling' || r.status === 'scheduled');
 
+  // Reschedules itself instead of running on a fixed interval, so the gap can
+  // widen while the server is failing. `setInterval` cannot do that: it fires
+  // at the same rate whether the backend is healthy or being OOM-killed, and a
+  // dying instance is exactly the one that must not be polled every five
+  // seconds while it tries to restart.
+  const [tick, setTick] = useState(0);
+
   useEffect(() => {
     if (!ready || (!inFlight && !active)) return undefined;
-    // Five seconds, not three. This runs alongside the session poll in
-    // `waitForSession`, the notification poll, and whatever the panel itself
-    // is doing — and the platform rate-limits the instance as a whole, not
-    // per hook. Shaving two seconds off one of several pollers buys a barely
-    // perceptible refresh and costs a share of a budget they all draw on.
-    const timer = setInterval(() => void load(), 5000);
-    return () => clearInterval(timer);
-  }, [ready, inFlight, active, load]);
+
+    // Five seconds when healthy — this runs alongside the session poll and the
+    // notification poll, and the platform limits the instance as a whole.
+    const delay = nextInterval(failures.current, 5000);
+    if (delay === null) return undefined; // circuit open: stop until a reload
+
+    const timer = setTimeout(async () => {
+      await load();
+      setTick((n) => n + 1); // schedule the next one from the new failure count
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [ready, inFlight, active, load, tick]);
 
   return { runs, isLive, loading, error, reload: load };
 }
