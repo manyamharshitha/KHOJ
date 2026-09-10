@@ -79,47 +79,22 @@ async function authHeader() {
 const REQUEST_TIMEOUT_MS = 60_000;
 
 /**
- * Statuses worth trying again, and how many times.
+ * There is deliberately no retry here.
  *
- * A single-worker instance that restarts — a deploy, a memory spike, the
- * platform moving it — answers 502/503/504 from its edge for a few seconds.
- * Those responses never reach the application, so they carry no CORS headers,
- * and the browser reports the whole thing as "blocked by CORS policy: No
- * 'Access-Control-Allow-Origin' header". That message sends people hunting a
- * CORS bug when the server was simply not there for a moment.
+ * A version of this file retried failed GETs three times, counting a network
+ * failure — `status === 0` — as worth another go. That was a mistake with a
+ * feedback loop in it. A request the browser blocks, and a request the platform
+ * rate-limits, both surface as `status === 0`, so every failure became three
+ * requests. Under load that earned an HTTP 429 from the edge, which produced
+ * more failures, which produced more retries. The whole dashboard went red at
+ * once, and because a 429 never reaches the application it carries no CORS
+ * headers — so the browser reported the entire pile-up as a CORS error.
  *
- * A poll that fails once inside a twenty-second restart window is not news.
+ * A retry belongs where something knows how long to wait and how often it is
+ * safe to ask. That is not the bottom of a client library sitting underneath
+ * several independent polling hooks.
  */
-const RETRY_STATUSES = new Set([502, 503, 504]);
-const RETRY_ATTEMPTS = 3;
-const RETRY_BASE_MS = 400;
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function request(path, options = {}) {
-  // GET only. A retried POST could place a second verification call, add a
-  // second listing, or start a second search — the failure modes here are
-  // measured in phone calls to strangers, so anything that changes state is
-  // attempted exactly once and its error reported honestly.
-  const idempotent = (options.method ?? 'GET') === 'GET';
-  let lastError;
-
-  for (let attempt = 1; attempt <= (idempotent ? RETRY_ATTEMPTS : 1); attempt += 1) {
-    try {
-      return await attemptRequest(path, options);
-    } catch (err) {
-      lastError = err;
-      const worthRetrying = err?.status === 0 || RETRY_STATUSES.has(err?.status);
-      if (!worthRetrying || attempt === RETRY_ATTEMPTS) break;
-      // Backs off so three attempts span roughly a second and a half rather
-      // than hammering an instance that is already struggling.
-      await sleep(RETRY_BASE_MS * attempt);
-    }
-  }
-  throw lastError;
-}
-
-async function attemptRequest(
+async function request(
   path,
   { method = 'GET', body, signal, timeoutMs = REQUEST_TIMEOUT_MS } = {},
 ) {
@@ -158,8 +133,10 @@ async function attemptRequest(
     // which is usually enough to spot a wrong VITE_API_URL.
     console.error(`[khoj api] ${method} ${BASE}${path} → network failure`, err);
     throw new ApiError(
-      `Could not reach the server at ${BASE}. It may be starting up — free instances ` +
-        'sleep after inactivity — or VITE_API_URL may be pointing somewhere wrong.',
+      `Could not reach the server at ${BASE}. It may be starting up, or rate-limiting ` +
+        'requests — a 429 is returned by the platform before the application sees it, ' +
+        'so it arrives here as an unreadable response and the browser reports it as ' +
+        'CORS. Wait a minute before retrying.',
       { status: 0 },
     );
   } finally {
@@ -260,11 +237,20 @@ export const getSession = (sessionId) => request(`/api/session/${sessionId}`);
 /** GET /api/session/{id}/results — `{ session, results, tier, listings_limit, beyond_plan }`. */
 export const getResults = (sessionId) => request(`/api/session/${sessionId}/results`);
 
-/** POST /api/session/{id}/call-all — start dialling, cheapest first. */
-export const callAll = (sessionId, limit = 0) =>
-  request(`/api/session/${sessionId}/call-all${limit ? `?limit=${limit}` : ''}`, {
-    method: 'POST',
-  });
+/**
+ * POST /api/session/{id}/call-all — start dialling, cheapest first.
+ *
+ * `listingId` narrows it to one property. The results view offers a call per
+ * card, and without this the server dialled whichever listing ranked cheapest —
+ * so confirming a call for the third result rang the first.
+ */
+export const callAll = (sessionId, limit = 0, listingId = null) => {
+  const query = new URLSearchParams();
+  if (limit) query.set('limit', String(limit));
+  if (listingId) query.set('listing_id', listingId);
+  const suffix = query.toString() ? `?${query}` : '';
+  return request(`/api/session/${sessionId}/call-all${suffix}`, { method: 'POST' });
+};
 
 /**
  * Poll a session until it settles.

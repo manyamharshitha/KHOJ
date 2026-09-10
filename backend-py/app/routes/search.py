@@ -346,8 +346,18 @@ async def call_all(
     background: BackgroundTasks,
     user: OptionalUser = None,
     limit: int = Query(default=0, ge=0, le=40),
+    listing_id: str | None = Query(
+        default=None,
+        description="Call only this listing. Omit to call the matched ones cheapest first.",
+    ),
 ) -> dict[str, object]:
-    """Start calling the matched listings, cheapest first."""
+    """Start calling the matched listings, cheapest first.
+
+    ``listing_id`` narrows that to one property. The results view offers a call
+    per card, and the card the customer pressed is the one that must ring —
+    dialling the cheapest instead would telephone a stranger the customer never
+    chose, having just shown them a different name and number to confirm.
+    """
     session = await get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="No such search.")
@@ -374,11 +384,24 @@ async def call_all(
         await set_session_status(session_id, SessionStatus.RANKED)
 
     listings = await listings_for_session(session_id)
+    if listing_id is not None:
+        listings = [x for x in listings if x.id == listing_id]
+        if not listings:
+            raise HTTPException(
+                status_code=404, detail="That listing is not part of this search."
+            )
+
     dialable = [x for x in listings if x.is_callable]
     if not dialable:
         raise HTTPException(
             status_code=409,
             detail=(
+                "That listing has no phone number to dial. Portals that keep numbers "
+                "behind a login cannot be called — paste a listing URL that shows a "
+                "number, or add one by hand."
+            )
+            if listing_id is not None
+            else (
                 "No listing has a phone number to dial. Paste a listing URL that "
                 "shows a number, or add one by hand."
             ),
@@ -415,7 +438,7 @@ async def call_all(
     # in which the listing existed and its call did not. The results endpoint then
     # answered `call: null`, which renders as "scheduled": a call that was about to
     # ring read as one that had merely been booked, and nothing later corrected it.
-    reserved = await reserve_calls(session, ceiling)
+    reserved = await reserve_calls(session, ceiling, listing_id=listing_id)
     if not reserved:
         raise HTTPException(
             status_code=409,

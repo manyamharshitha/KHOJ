@@ -348,7 +348,7 @@ async def _run_search(session: SearchSession) -> None:
 
 
 async def reserve_calls(
-    session: SearchSession, limit: int | None = None
+    session: SearchSession, limit: int | None = None, listing_id: str | None = None
 ) -> list[tuple[Listing, CallLog]]:
     """Create the call rows for a session *before* any dialling starts.
 
@@ -362,6 +362,16 @@ async def reserve_calls(
     whatever the browser reads next, it reads a real status.
     """
     listings = await listings_for_session(session.id)
+    # One named listing, when the customer picked one.
+    #
+    # Without this the endpoint always dialled whatever `call_order` ranked
+    # first, so pressing "call" on the third result telephoned the first — and
+    # the confirmation dialog had already named the third by address and number.
+    # Agreeing to call one property and having a different one rung is not a
+    # cosmetic bug when the thing on the other end is somebody's phone.
+    if listing_id is not None:
+        listings = [x for x in listings if x.id == listing_id]
+
     ceiling = limit or settings.max_calls_per_session
     reserved: list[tuple[Listing, CallLog]] = []
 

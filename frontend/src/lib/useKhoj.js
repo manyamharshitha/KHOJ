@@ -166,7 +166,12 @@ export function useResults(sessionId, { active = false } = {}) {
 
   useEffect(() => {
     if (!ready || (!inFlight && !active)) return undefined;
-    const timer = setInterval(() => void load(), 3000);
+    // Five seconds, not three. This runs alongside the session poll in
+    // `waitForSession`, the notification poll, and whatever the panel itself
+    // is doing — and the platform rate-limits the instance as a whole, not
+    // per hook. Shaving two seconds off one of several pollers buys a barely
+    // perceptible refresh and costs a share of a budget they all draw on.
+    const timer = setInterval(() => void load(), 5000);
     return () => clearInterval(timer);
   }, [ready, inFlight, active, load]);
 

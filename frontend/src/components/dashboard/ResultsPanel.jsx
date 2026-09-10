@@ -283,6 +283,30 @@ const statusFor = {
  */
 const SPINNER_CEILING_MS = 90_000;
 
+/**
+ * Card states where offering to place a call makes sense.
+ *
+ * Anything without a *successful* call behind it, which is the point: this was
+ * previously `status === 'pending'` alone, so the moment a call failed the
+ * button vanished and the listing became uncallable forever. With a provider
+ * that returns "no route" intermittently, that meant one bad attempt
+ * permanently stranded a listing — and since the call control lives only here,
+ * there was no other way to reach it.
+ *
+ * `completed` and `dead` are excluded because a call already happened and the
+ * answers are on the card. `calling` and `scheduled` are excluded because one
+ * is happening right now, and offering a second would place two calls to the
+ * same person.
+ */
+const CAN_CALL = new Set([
+  'pending',
+  'failed',
+  'no-answer',
+  'busy',
+  'cancelled',
+  'blocked',
+]);
+
 const SEARCH_PROGRESS = {
   starting: 'Starting the search…',
   queued: 'Queued…',
@@ -394,7 +418,10 @@ const ResultsPanel = ({ sessionId = null }) => {
     if (!target) return;
     setCalling({ id: target.id, error: null });
     try {
-      await callAll(sessionId, 1);
+      // `target.id` is the listing id — see toRunCard in adapters.js, which
+      // keys a card on the listing. Sending it is what makes the property named
+      // in the dialog the one that actually rings.
+      await callAll(sessionId, 1, target.id);
       setVerifying(null);
       setCalling({ id: null, error: null });
       // The row goes to DIALING server-side; pull it now rather than waiting
@@ -652,7 +679,7 @@ const ResultsPanel = ({ sessionId = null }) => {
                       A listing from a portal that hides its numbers simply has
                       no button: there is nothing to ring, and an enabled
                       control that can only fail is worse than none. */}
-                  {run.status === 'pending' && (
+                  {CAN_CALL.has(run.status) && (
                     <CallRow>
                       {run.broker?.phone ? (
                         <>
@@ -662,7 +689,11 @@ const ResultsPanel = ({ sessionId = null }) => {
                             disabled={calling.id === run.id}
                             onClick={() => setVerifying(run)}
                           >
-                            {calling.id === run.id ? 'Starting…' : 'Verify by phone'}
+                            {calling.id === run.id
+                              ? 'Starting…'
+                              : run.status === 'pending'
+                                ? 'Verify by phone'
+                                : 'Try the call again'}
                           </Button>
                           <span>{run.broker.phone}</span>
                         </>
