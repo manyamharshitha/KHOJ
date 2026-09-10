@@ -65,6 +65,12 @@ const Login = () => {
       setStatus('idle');
       return;
     }
+    // The popup could not be used and the whole tab is being handed to Google.
+    // Stay put and stay in the loading state: this page is about to be replaced,
+    // and navigating now would race that — landing a not-yet-signed-in person on
+    // the dashboard. Sign-in resumes on the return leg.
+    if (result.pending) return;
+
     setStatus('done');
     navigate('/dashboard');
   };

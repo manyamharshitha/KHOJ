@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 
 import { auth, isFirebaseConfigured } from '../firebase';
+import { completeGoogleRedirect } from './authApi';
 import * as api from './api';
 import { toDashboard, toQuota, toRunCards } from './adapters';
 
@@ -42,6 +43,14 @@ export function useAuthUser() {
       setState({ user: null, ready: true });
       return undefined;
     }
+
+    // If this load is the return leg of a redirect sign-in, settle it before
+    // anything reads the auth state. Not awaited: on an ordinary load it
+    // resolves to nothing, and blocking every visitor's first paint on a
+    // network round trip to serve the one who just came back from Google would
+    // be the wrong trade. `onAuthStateChanged` below delivers the user either
+    // way — this call exists to finalise the operation and swallow nothing.
+    void completeGoogleRedirect();
 
     let active = true;
     const unsub = onAuthStateChanged(

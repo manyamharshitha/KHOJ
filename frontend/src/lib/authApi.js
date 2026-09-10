@@ -2,7 +2,9 @@ import {
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
+  getRedirectResult,
   signInWithPopup,
+  signInWithRedirect,
   updateProfile,
 } from 'firebase/auth';
 import { auth, googleProvider, isFirebaseConfigured } from '../firebase';
@@ -78,22 +80,74 @@ export async function signInWithGoogle() {
   try {
     const outcome = await Promise.race([signInWithPopup(auth, googleProvider), deadline]);
 
-    if (outcome === 'timeout') {
-      const domain = auth?.config?.authDomain ?? 'your Firebase auth domain';
-      return {
-        error:
-          `The Google sign-in window never loaded. Khoj could not reach ${domain}, ` +
-          'which Google sign-in goes through. A firewall, antivirus web shield or ' +
-          'network filter is the usual cause. Signing in with an email and password ' +
-          'uses a different address and should still work.',
-      };
-    }
+    if (outcome === 'timeout') return redirectInstead();
 
     return { user: outcome.user };
   } catch (err) {
+    // A popup that cannot be driven is not a dead end, so it is not reported as
+    // one. Google's OAuth page sets Cross-Origin-Opener-Policy: same-origin,
+    // which severs the opener relationship and stops Firebase polling
+    // `popup.closed` to learn that sign-in finished — the browser logs
+    // "Cross-Origin-Opener-Policy policy would block the window.closed call"
+    // and the promise may never settle. Declaring COOP on our own page helps
+    // and does not always suffice, because the other half of the pair belongs
+    // to Google.
+    //
+    // Redirecting has no second window and therefore no opener relationship to
+    // sever, so it cannot fail this way at all.
+    if (POPUP_UNUSABLE.has(err?.code)) return redirectInstead();
     return { error: friendlyError(err) };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Firebase error codes that mean "the popup could not be used", as distinct
+ * from "the sign-in was refused".
+ *
+ * Only the first kind is worth retrying by another route. Falling back on a
+ * genuine credential failure would send somebody round a redirect to be told
+ * no a second time.
+ */
+const POPUP_UNUSABLE = new Set([
+  'auth/popup-blocked',
+  'auth/cancelled-popup-request',
+  'auth/popup-closed-by-user',
+  'auth/web-storage-unsupported',
+  'auth/operation-not-supported-in-this-environment',
+]);
+
+/**
+ * Hand the whole tab to Google instead of opening a window.
+ *
+ * Never resolves in the normal case: the browser navigates away mid-promise
+ * and the answer arrives on the next page load, through
+ * :func:`completeGoogleRedirect`. The returned shape exists for the case where
+ * the navigation itself is refused.
+ */
+async function redirectInstead() {
+  try {
+    await signInWithRedirect(auth, googleProvider);
+    return { pending: true };
+  } catch (err) {
+    return { error: friendlyError(err) };
+  }
+}
+
+/**
+ * Finish a sign-in that went via redirect. Call once, early, on page load.
+ *
+ * Returns `{ user }` when this load is the return leg, and `{}` on every
+ * ordinary load — which is most of them, and is not an error.
+ */
+export async function completeGoogleRedirect() {
+  if (!isFirebaseConfigured) return {};
+  try {
+    const credential = await getRedirectResult(auth);
+    return credential?.user ? { user: credential.user } : {};
+  } catch (err) {
+    return { error: friendlyError(err) };
   }
 }
 

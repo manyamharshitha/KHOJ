@@ -256,6 +256,59 @@ def _tri(value: Any) -> bool | None:
     return True if text == "yes" else False if text == "no" else None
 
 
+#: SIP response codes, which is what CALL-E's ``failure_code`` carries once a
+#: leg has reached a carrier at all.
+#:
+#: Read these and never the ``summary``. CALL-E's summary is model-written prose
+#: that guesses at a cause it was not told — it says "the recipient may be
+#: unavailable" for a 503, which is a fault in the carrier's network and says
+#: nothing whatever about the recipient.
+SIP_MEANINGS: dict[str, str] = {
+    "404": (
+        "the carrier had no route to this number. Nothing rang. On an Indian "
+        "mobile this normally means the telephony account cannot terminate "
+        "calls to +91 numbers"
+    ),
+    "403": "the carrier refused the route or the caller ID",
+    "408": "it rang and nobody picked up",
+    "480": "the phone was switched off or out of coverage",
+    "486": "the line was engaged",
+    "487": "the call was cancelled before it was answered",
+    "503": (
+        "the carrier or trunk was unavailable. Nothing rang, and this is a "
+        "fault on the telephony provider's side rather than anything about "
+        "the number"
+    ),
+    "603": "the phone rejected the call",
+}
+
+
+def describe_failure(task: dict[str, Any], attempt: dict[str, Any] | None) -> str | None:
+    """Why the call did not happen, in words that identify the fault.
+
+    CALL-E's own ``failure_message`` is frequently empty, and the fallback on
+    the task is the string ``"calling task status=FAILED"`` — which restates
+    that it failed and adds nothing. That was what reached the customer, and it
+    left both them and us unable to tell a wrong number from a provider outage.
+
+    The SIP code is the part that identifies the failure, so it is put in front
+    and translated.
+    """
+    code = str((attempt or {}).get("failure_code") or task.get("failure_code") or "").strip()
+    meaning = SIP_MEANINGS.get(code)
+
+    if meaning:
+        return f"The call could not be connected — {meaning} (SIP {code})."
+
+    stated = (attempt or {}).get("failure_message") or task.get("failure_message")
+    # The generic restatement is worse than saying plainly that we do not know.
+    if stated and "status=FAILED" not in str(stated):
+        return str(stated)[:400]
+    if code:
+        return f"The call could not be connected (provider code {code})."
+    return "The call could not be connected, and the provider gave no reason."
+
+
 def _map_status(task: dict[str, Any], attempt: dict[str, Any] | None) -> CallStatus:
     """CALL-E's lifecycle onto ours.
 
@@ -279,6 +332,24 @@ def _map_status(task: dict[str, Any], attempt: dict[str, Any] | None) -> CallSta
         return CallStatus.FAILED
 
     code = str(attempt.get("failure_code") or task.get("failure_code") or "").lower()
+
+    # Numeric SIP codes first. The word checks below never match one — "busy"
+    # is not a substring of "486" — so a carrier that answers in codes rather
+    # than prose fell through to the catch-all and was recorded as whatever the
+    # task status happened to be.
+    numeric = {
+        "408": CallStatus.NO_ANSWER,
+        "480": CallStatus.NO_ANSWER,
+        "486": CallStatus.BUSY,
+        "603": CallStatus.FAILED,
+        "404": CallStatus.FAILED,
+        "403": CallStatus.FAILED,
+        "487": CallStatus.CANCELLED,
+        "503": CallStatus.FAILED,
+    }
+    if code in numeric:
+        return numeric[code]
+
     if any(k in code for k in ("no_answer", "noanswer")):
         return CallStatus.NO_ANSWER
     if "busy" in code:
@@ -560,7 +631,8 @@ class CalleDialer:
             recording_url=(attempt or {}).get("recording_url"),
             consent_to_record=_tri(structured.get("consent_to_record")),
             summary=recipient.get("summary") or task.get("summary"),
-            error=(attempt or {}).get("failure_message") or task.get("failure_message"),
+            error=None if _map_status(task, attempt) is CallStatus.COMPLETED
+            else describe_failure(task, attempt),
         )
 
     def close(self) -> None:

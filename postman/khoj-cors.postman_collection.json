@@ -1,0 +1,303 @@
+{
+  "info": {
+    "name": "Khoj - CORS and reachability",
+    "description": "Diagnoses a browser 'Failed to fetch' between the Vercel frontend and the Render backend.\n\nREAD THIS FIRST\n\nPostman cannot reproduce a CORS failure. CORS is enforced by the browser, not the server: the server always answers, and the browser decides whether the page is allowed to read the answer. Postman is not a browser, so it ignores Access-Control-Allow-Origin entirely and every request below will succeed even if a real page would be blocked.\n\nWhat this collection is for is the other half of the job: proving what the server actually sends, so you can tell a genuine CORS rejection apart from DNS failure, a refused connection, a sleeping instance or a wrong VITE_API_URL - all four of which surface in the console as the same useless 'Failed to fetch'.\n\nRun the folder top to bottom. If every test passes, the server side is correct and the fault is in the browser: an extension blocking the request, mixed content, or a stale bundle. See request 7 for how to confirm that in the browser itself.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "backend_url",
+      "value": "https://khoj-zgkq.onrender.com",
+      "description": "The Render service. No trailing slash."
+    },
+    {
+      "key": "frontend_origin",
+      "value": "https://khoj-beta.vercel.app",
+      "description": "Exactly what the browser puts in the Origin header: scheme + host + port, no trailing slash, no path."
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Is the backend reachable at all?",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Rules out DNS failure, a refused connection and a sleeping instance.",
+              "// If this fails, nothing below is meaningful and the problem is not CORS.",
+              "pm.test('backend answers 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// A cold Render instance takes tens of seconds to wake. That looks like a",
+              "// hang in the browser, which people report as a CORS error.",
+              "pm.test('answered promptly (not waking from sleep)', function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(10000);",
+              "});",
+              "",
+              "console.log('reachable in ' + pm.response.responseTime + 'ms');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{backend_url}}/api/health", "host": ["{{backend_url}}"], "path": ["api", "health"] },
+        "description": "No Origin header. Pure reachability."
+      }
+    },
+    {
+      "name": "2. Preflight - OPTIONS /api/search",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// The request the browser sends before any POST carrying an Authorization",
+              "// header. If this is wrong, the real request is never sent at all and the",
+              "// console shows 'Failed to fetch' with no server log to match it.",
+              "const sent = pm.collectionVariables.get('frontend_origin');",
+              "const allowed = pm.response.headers.get('Access-Control-Allow-Origin');",
+              "",
+              "pm.test('preflight returns 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Byte-identical, not merely present. A trailing slash or a path here is",
+              "// the single most common cause of this whole failure.",
+              "pm.test('Allow-Origin exactly matches the Origin sent', function () {",
+              "    pm.expect(allowed, 'no Access-Control-Allow-Origin header at all').to.be.a('string');",
+              "    pm.expect(allowed).to.eql(sent);",
+              "});",
+              "",
+              "pm.test('POST is allowed', function () {",
+              "    const methods = (pm.response.headers.get('Access-Control-Allow-Methods') || '').toUpperCase();",
+              "    pm.expect(methods === '*' || methods.includes('POST')).to.be.true;",
+              "});",
+              "",
+              "// Every request from the app carries a Firebase ID token. If this header",
+              "// is not allowed, every authenticated call fails while anonymous ones work.",
+              "pm.test('authorization header is allowed', function () {",
+              "    const headers = (pm.response.headers.get('Access-Control-Allow-Headers') || '').toLowerCase();",
+              "    pm.expect(headers === '*' || headers.includes('authorization')).to.be.true;",
+              "});",
+              "",
+              "// With credentials enabled the server may not answer '*'. The two settings",
+              "// are only valid together when the origin is echoed explicitly.",
+              "pm.test('credentials mode is consistent', function () {",
+              "    if (pm.response.headers.get('Access-Control-Allow-Credentials') === 'true') {",
+              "        pm.expect(allowed, 'wildcard origin is illegal with credentials').to.not.eql('*');",
+              "    }",
+              "});",
+              "",
+              "console.log('sent Origin   : ' + sent);",
+              "console.log('got  Allow-Origin: ' + allowed);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "OPTIONS",
+        "header": [
+          { "key": "Origin", "value": "{{frontend_origin}}" },
+          { "key": "Access-Control-Request-Method", "value": "POST" },
+          { "key": "Access-Control-Request-Headers", "value": "authorization,content-type" }
+        ],
+        "url": { "raw": "{{backend_url}}/api/search", "host": ["{{backend_url}}"], "path": ["api", "search"] },
+        "description": "The exact preflight a browser sends before POST /api/search."
+      }
+    },
+    {
+      "name": "3. Negative control - preflight from a wrong origin",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Proves the allowlist is an allowlist. If this origin is echoed back, the",
+              "// server is accepting anything and request 2 passing told you nothing -",
+              "// it would pass for any origin, including one you never configured.",
+              "const allowed = pm.response.headers.get('Access-Control-Allow-Origin');",
+              "",
+              "pm.test('a foreign origin is NOT echoed back', function () {",
+              "    pm.expect(allowed).to.not.eql('https://not-your-site.example.com');",
+              "});",
+              "",
+              "pm.test('and is not answered with a wildcard', function () {",
+              "    pm.expect(allowed).to.not.eql('*');",
+              "});",
+              "",
+              "console.log('foreign origin got Allow-Origin: ' + (allowed || '(none - correct)'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "OPTIONS",
+        "header": [
+          { "key": "Origin", "value": "https://not-your-site.example.com" },
+          { "key": "Access-Control-Request-Method", "value": "POST" },
+          { "key": "Access-Control-Request-Headers", "value": "authorization,content-type" }
+        ],
+        "url": { "raw": "{{backend_url}}/api/search", "host": ["{{backend_url}}"], "path": ["api", "search"] },
+        "description": "Should NOT be allowed. A pass here means the allowlist is real."
+      }
+    },
+    {
+      "name": "4. The real request - POST /api/search",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// A preflight can pass while the actual response omits the header, which",
+              "// the browser reports identically. Both have to be checked.",
+              "const sent = pm.collectionVariables.get('frontend_origin');",
+              "",
+              "pm.test('search is accepted (202)', function () {",
+              "    pm.response.to.have.status(202);",
+              "});",
+              "",
+              "pm.test('the actual response also carries Allow-Origin', function () {",
+              "    pm.expect(pm.response.headers.get('Access-Control-Allow-Origin')).to.eql(sent);",
+              "});",
+              "",
+              "// Saved so you can look the session up afterwards. NOTE: this creates a",
+              "// real search on the production database.",
+              "const body = pm.response.json();",
+              "if (body.session_id) {",
+              "    pm.collectionVariables.set('session_id', body.session_id);",
+              "    console.log('created session: ' + body.session_id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Origin", "value": "{{frontend_origin}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"prompt\": \"2BHK in Kondapur under 25000\",\n  \"sites\": [\"khoj\"]\n}"
+        },
+        "url": { "raw": "{{backend_url}}/api/search", "host": ["{{backend_url}}"], "path": ["api", "search"] },
+        "description": "Creates a REAL search session on the production database. Uses the 'khoj' source only, so nothing is crawled and no call is placed."
+      }
+    },
+    {
+      "name": "5. Error path - does a 422 still carry CORS headers?",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// The classic false positive. If an error escapes to a handler outside the",
+              "// CORS middleware, the response has no Allow-Origin and the browser reports",
+              "// a CORS error for what was really a validation failure - so you go hunting",
+              "// for a CORS bug that does not exist.",
+              "pm.test('rejected as 422', function () {",
+              "    pm.response.to.have.status(422);",
+              "});",
+              "",
+              "pm.test('the error response still carries Allow-Origin', function () {",
+              "    pm.expect(pm.response.headers.get('Access-Control-Allow-Origin'))",
+              "      .to.eql(pm.collectionVariables.get('frontend_origin'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Origin", "value": "{{frontend_origin}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"not_a_real_field\": true\n}" },
+        "url": { "raw": "{{backend_url}}/api/search", "host": ["{{backend_url}}"], "path": ["api", "search"] },
+        "description": "Deliberately invalid body."
+      }
+    },
+    {
+      "name": "6. Error path - does a rejected token still carry CORS headers?",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// An expired Firebase token is the commonest real-world version of this.",
+              "pm.test('the response carries Allow-Origin whatever the status', function () {",
+              "    pm.expect(pm.response.headers.get('Access-Control-Allow-Origin'))",
+              "      .to.eql(pm.collectionVariables.get('frontend_origin'));",
+              "});",
+              "",
+              "// Not an assertion, an observation. If this is 200, AUTH_REQUIRED is not",
+              "// being enforced and an unauthenticated caller can reach this endpoint.",
+              "console.log('dashboard with a bad token -> HTTP ' + pm.response.code);",
+              "if (pm.response.code === 200) {",
+              "    console.log('NOTE: answered 200 without a valid token. AUTH_REQUIRED is off in this environment.');",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Origin", "value": "{{frontend_origin}}" },
+          { "key": "Authorization", "value": "Bearer not-a-real-token" }
+        ],
+        "url": { "raw": "{{backend_url}}/api/users/dashboard", "host": ["{{backend_url}}"], "path": ["api", "users", "dashboard"] }
+      }
+    },
+    {
+      "name": "7. Read me - how to actually reproduce it in the browser",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('');",
+              "console.log('If requests 1-6 all passed, the server side is correct and Postman');",
+              "console.log('has told you everything it can. Postman does not enforce CORS, so it');",
+              "console.log('cannot fail the way a browser fails.');",
+              "console.log('');",
+              "console.log('To reproduce for real: open ' + pm.collectionVariables.get('frontend_origin'));",
+              "console.log('in your browser, open DevTools > Console, and paste:');",
+              "console.log('');",
+              "console.log(\"  fetch('\" + pm.collectionVariables.get('backend_url') + \"/api/health')\");",
+              "console.log(\"    .then(r => console.log('OK', r.status))\");",
+              "console.log(\"    .catch(e => console.error('FAILED', e))\");",
+              "console.log('');",
+              "console.log('That runs from the real page origin, so the browser applies CORS.');",
+              "console.log('  - OK 200            -> the backend is fine; the fault is elsewhere in the app');",
+              "console.log('  - a CORS error      -> genuine, and requests 1-6 above would have caught it');",
+              "console.log('  - Failed to fetch   -> the request never left the browser: an extension,');",
+              "console.log('                         an ad blocker, or mixed content. Check the Network tab:');",
+              "console.log('                         a blocked request shows as (blocked) or never appears.');",
+              "console.log('');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{backend_url}}/api/health", "host": ["{{backend_url}}"], "path": ["api", "health"] },
+        "description": "Prints the browser reproduction steps to the Postman console. Run this last."
+      }
+    }
+  ]
+}
