@@ -21,6 +21,7 @@ from app.config import settings
 from app.core import scheduler
 from app.core.db import DatabaseNotReady, connect, disconnect, get_db
 from app.repositories import fail_orphaned_sessions
+from app.scraping.capacity import describe_host, headless_available
 from app.core.indexes import ensure_indexes
 from app.routes import auth as auth_routes
 from app.routes import (
@@ -103,6 +104,19 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     )
     if settings.telephony_provider == "mock":
         log.warning("telephony is MOCK — calls are simulated, nothing is dialled")
+
+    # Said at boot so the constraint is visible before a search hits it, rather
+    # than discovered from a search that quietly returned fewer results.
+    can_crawl, why = headless_available()
+    log.info("crawler: %s — %s (%s)", "enabled" if can_crawl else "DISABLED", why, describe_host())
+    if not can_crawl:
+        log.warning(
+            "Listing portals will NOT be crawled on this host. Searches fall back to "
+            "properties listed directly on Khoj. This is deliberate: Chromium needs "
+            "roughly 400MB and being OOM-killed takes the whole process down, along "
+            "with every call and search in flight. Set ENABLE_HEADLESS_SCRAPING=true "
+            "to override, or move to an instance with more memory."
+        )
 
     # A browser signing people in and a server that cannot verify what it signs
     # them in with. Nothing errors: every request arrives with a token, fails

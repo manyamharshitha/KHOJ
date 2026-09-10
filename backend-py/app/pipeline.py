@@ -47,6 +47,7 @@ from app.repositories import (
     set_session_status,
     update_session,
 )
+from app.scraping.capacity import headless_available
 from app.scraping.crawler import crawl
 from app.telephony.calle_dialer import CalleDialer, CalleUnavailable, spoken_int
 from app.telephony.mock_dialer import MockDialer
@@ -197,6 +198,10 @@ async def _run_search(session: SearchSession) -> None:
 
     try:
         listings: list[Listing] = []
+        #: Why the portals were not read, when they were not. Carried to the end
+        #: so the customer is told the difference between "the portals had
+        #: nothing" and "this server could not open them".
+        crawl_skipped: str | None = None
 
         if session.pasted_content:
             # The customer supplied the text, so there is nothing to fetch. This
@@ -238,6 +243,17 @@ async def _run_search(session: SearchSession) -> None:
                     "rent, the locality and a contact number.",
                 )
                 return
+        elif not (capacity := headless_available())[0]:
+            # Asked before the browser starts, because afterwards is too late.
+            #
+            # Chromium wants ~400MB at launch. On an instance that does not have
+            # it the kernel answers SIGKILL, which no `except` can catch — the
+            # process vanishes mid-request and every other customer's call and
+            # search goes with it. Declining to start the browser costs this one
+            # search its portal results. Starting it costs the whole service.
+            log.warning("[%s] headless crawling skipped — %s", sid, capacity[1])
+            crawl_skipped = capacity[1]
+
         else:
             await set_session_status(sid, SessionStatus.SCRAPING)
             pages = await crawl(session.target_sites)
@@ -251,13 +267,19 @@ async def _run_search(session: SearchSession) -> None:
                     )
 
             if not readable:
-                await update_session(
-                    sid,
-                    status=SessionStatus.FAILED.value,
-                    error="None of the chosen sites could be read. "
-                    + " ".join(p.note for p in pages if p.note),
-                )
-                return
+                # Not fatal when Khoj's own listings were also asked for: those
+                # are fetched below and are a real result. Failing the whole
+                # search because a portal blocked us would throw away listings
+                # that were never going to come from that portal anyway.
+                if not session.include_native:
+                    await update_session(
+                        sid,
+                        status=SessionStatus.FAILED.value,
+                        error="None of the chosen sites could be read. "
+                        + " ".join(p.note for p in pages if p.note),
+                    )
+                    return
+                log.warning("[%s] no portal was readable; using Khoj listings only", sid)
 
             await set_session_status(sid, SessionStatus.EXTRACTING)
 
@@ -293,7 +315,12 @@ async def _run_search(session: SearchSession) -> None:
                     continue
                 listings.extend(result)
 
-        if session.include_native:
+        # `or crawl_skipped`: when the portals could not be opened, Khoj's own
+        # listings are searched whether or not they were asked for. They are the
+        # only source left, they cost one indexed query, and returning nothing
+        # at all when there is something to return would be the wrong answer to
+        # a memory limit the customer neither caused nor can see.
+        if session.include_native or crawl_skipped:
             listings.extend(await _native_for(session))
 
         kept, dropped = filter_hard_constraints(listings, session.criteria)
@@ -313,21 +340,37 @@ async def _run_search(session: SearchSession) -> None:
         await save_listings(ordered + [x for x, _ in dropped])
 
         callable_count = sum(1 for x in within_plan if x.is_callable)
+
+        # Informational, never FAILED. Whatever happened above, the ranked
+        # listings are real and on screen, and a status of FAILED would hide
+        # them behind an error card.
+        if crawl_skipped and not listings:
+            note = (
+                "This server does not have the memory to open listing portals, so "
+                "only properties listed directly on Khoj were searched — and none "
+                "matched. Add a listing by hand, or paste a listing URL."
+            )
+        elif crawl_skipped:
+            note = (
+                "Showing properties listed directly on Khoj. The listing portals "
+                "were not searched: this server does not have the memory to open "
+                "them. Paste a listing URL, or add a number by hand, to include one."
+            )
+        elif not callable_count:
+            note = (
+                "These listings are shown, but none published a phone number — "
+                "most portals keep it behind a login. Khoj can't call these for you. "
+                "Paste a listing URL that shows a number, or add one by hand."
+            )
+        else:
+            note = None
+
         await update_session(
             sid,
             status=SessionStatus.RANKED.value,
             listings_found=len(listings),
             listings_matched=len(within_plan),
-            # Informational, not a failure. The listings are ranked and on
-            # screen; what is missing is the ability to ring them, which is the
-            # next step and not this one. Portals that gate their numbers are
-            # still worth searching, so the wording says what happened rather
-            # than implying the search did not work.
-            error=None
-            if callable_count
-            else "These listings are shown, but none published a phone number — "
-            "most portals keep it behind a login. Khoj can't call these for you. "
-            "Paste a listing URL that shows a number, or add one by hand.",
+            error=note,
         )
         log.info(
             "[%s] search done: %d found, %d matched, %d callable",

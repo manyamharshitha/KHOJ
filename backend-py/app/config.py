@@ -146,6 +146,31 @@ class Settings(BaseSettings):
     scrape_timeout_ms: int = 30_000
     scrape_concurrency: int = 3
 
+    #: Whether this host may launch headless Chromium at all.
+    #:
+    #: ``None`` means decide from the memory actually available — see
+    #: :func:`app.scraping.capacity.headless_available`. Set true or false to
+    #: override that judgement.
+    #:
+    #: This exists because the failure it prevents cannot be handled any other
+    #: way. Chromium needs roughly 300-400MB the moment it starts; a 512MB
+    #: instance already holding Python, FastAPI, the Motor pool and the model
+    #: clients does not have that, and the kernel's answer is SIGKILL. A signal
+    #: is not an exception: no ``except`` runs, no ``finally`` runs, the process
+    #: is simply gone mid-request. The platform then answers 503 with no CORS
+    #: headers and the browser reports a CORS error for a server that died.
+    #:
+    #: Nothing downstream can recover from that, so the only defence is to
+    #: decline to start the browser when the memory is not there.
+    enable_headless_scraping: bool | None = None
+
+    #: Megabytes of available memory below which Chromium is not launched.
+    #:
+    #: Deliberately above the 300-400MB Chromium itself wants: the check happens
+    #: before the browser starts, and the request being served still needs room
+    #: while it runs.
+    headless_memory_floor_mb: int = 600
+
     # --- deadlines -------------------------------------------------------
     #: Every one of these bounds an await that had no bound at all, and each
     #: was chosen because a *hang* is not an exception: the search runs as a
