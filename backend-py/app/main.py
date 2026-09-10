@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
@@ -162,9 +163,40 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+class CatchAll(BaseHTTPMiddleware):
+    """Turn any unhandled exception into a JSON 500 *inside* the CORS layer.
+
+    FastAPI's ``@app.exception_handler(Exception)`` is registered on Starlette's
+    ``ServerErrorMiddleware``, which sits outside every middleware the
+    application adds — including CORS. So the one response most in need of CORS
+    headers, the 500 nobody predicted, was produced above the layer that adds
+    them, and the browser reported it as a CORS failure instead of a server
+    error. Catching here, below CORS, closes that gap.
+    """
+
+    async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
+        try:
+            return await call_next(request)
+        except Exception:  # noqa: BLE001 - the whole point is that nothing escapes
+            log.exception("unhandled error on %s %s", request.method, request.url.path)
+            return JSONResponse(
+                status_code=500, content={"detail": "Something went wrong on our side."}
+            )
+
+
+# Order matters, and is the opposite of how it reads. Starlette wraps each new
+# middleware *around* the previous one, so the last added is the outermost.
+# CORS must therefore be added last to see every response — including the 500
+# that CatchAll produces.
+app.add_middleware(CatchAll)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.origins,
+    # Vercel gives every preview deployment its own subdomain, so the exact
+    # origin cannot be known ahead of time. Anchored at both ends and escaping
+    # the dots: an unanchored pattern would also match
+    # `https://evil.com/khoj-beta.vercel.app`.
+    allow_origin_regex=r"^https://[a-zA-Z0-9-]+\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
