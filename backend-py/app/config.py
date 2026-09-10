@@ -274,6 +274,22 @@ class Settings(BaseSettings):
     max_concurrent_calls: int = 3
     max_calls_per_session: int = 20
 
+    #: How many times to dial one listing when the network refuses the call.
+    #:
+    #: Applies only to failures where nothing rang — a carrier answering "no
+    #: route" or "service unavailable". The provider is measurably intermittent
+    #: on Indian mobiles: the same number completed a call and then returned
+    #: "no route" twenty-five minutes later on an identical payload.
+    #:
+    #: Two, not more. Each attempt is a real call the provider may bill, and a
+    #: destination that refuses twice in a row is refusing for a reason that a
+    #: third attempt will not change.
+    call_attempts: int = 2
+
+    #: Pause between those attempts. Long enough for a transient routing fault
+    #: to clear, short enough that the customer is still watching the screen.
+    call_retry_delay_s: float = 5.0
+
     #: Calls one account may place in a rolling 24 hours, whatever the plan.
     #: A phone call reaches a stranger, so the ceiling is on the account and
     #: not only on the wallet.

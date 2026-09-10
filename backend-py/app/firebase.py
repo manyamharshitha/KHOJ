@@ -57,6 +57,23 @@ def _app() -> firebase_admin.App:
     return firebase_admin.initialize_app(options=options)
 
 
+def has_service_credential() -> bool:
+    """Whether Firebase can make *authenticated* calls on our behalf.
+
+    Verifying an ID token needs no credential: the signature is checked against
+    Google's public certificates and the audience against the project id, both
+    of which a project id alone satisfies. Anything that reads back from the
+    Identity Toolkit API — looking a user up, checking whether a token has been
+    revoked — does need one.
+
+    Kept separate because conflating the two is expensive in exactly the wrong
+    direction: it makes an optional freshness check into a hard prerequisite for
+    signing in at all.
+    """
+    path = settings.firebase_credentials_file
+    return bool(path) and Path(path).is_file()
+
+
 
 @lru_cache(maxsize=1)
 def get_bucket():  # type: ignore[no-untyped-def]  # SDK returns an untyped Bucket

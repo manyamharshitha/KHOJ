@@ -57,6 +57,16 @@ log = logging.getLogger(__name__)
 #: Guards against two calls to the same broker from one process.
 _call_gate = asyncio.Semaphore(settings.max_concurrent_calls)
 
+#: Outcomes worth dialling again.
+#:
+#: FAILED only, and deliberately not the rest. A FAILED call is one the network
+#: refused before it reached anybody — nothing rang, so nobody is disturbed by
+#: trying again. NO_ANSWER, BUSY and CANCELLED all mean a real telephone rang
+#: in someone's hand; repeating those would ring a stranger a second time
+#: because our provider was unreliable, and that cost lands on them rather than
+#: on us.
+_WORTH_RETRYING = frozenset({CallStatus.FAILED})
+
 
 def ist_minutes(at: datetime) -> int:
     """Minutes past midnight, IST. India has no daylight saving, so a fixed
@@ -604,9 +614,39 @@ async def _call_one(session: SearchSession, listing: Listing, call: CallLog) -> 
             return
 
         task = build_task(listing, session.criteria, criteria_summary(session.criteria))
-        outcome = await dialer.verify(
-            call_id=call.id, listing=listing, criteria=session.criteria, task=task
-        )
+
+        # Retried, because this provider is demonstrably intermittent: the same
+        # number, with a byte-identical payload, completed a call and then got
+        # "no route" twenty-five minutes later. A carrier that cannot find a
+        # route this second frequently can the next.
+        #
+        # Only for failures where nothing rang. Retrying a busy line or an
+        # unanswered ring would telephone a real person a second time because
+        # our provider was flaky, which is not a trade this product gets to
+        # make on their behalf. `attempt` feeds the idempotency key, so a retry
+        # is a genuinely new call rather than a replayed one.
+        outcome = None
+        for attempt in range(1, settings.call_attempts + 1):
+            outcome = await dialer.verify(
+                call_id=call.id,
+                listing=listing,
+                criteria=session.criteria,
+                task=task,
+                attempt=attempt,
+            )
+            if outcome.status not in _WORTH_RETRYING:
+                break
+            if attempt < settings.call_attempts:
+                log.warning(
+                    "[%s] attempt %d/%d did not reach the handset (%s) — retrying in %.0fs",
+                    call.id,
+                    attempt,
+                    settings.call_attempts,
+                    outcome.error or outcome.status.value,
+                    settings.call_retry_delay_s,
+                )
+                call.attempt = attempt + 1
+                await asyncio.sleep(settings.call_retry_delay_s)
 
         call.provider_call_id = outcome.provider_call_id or None
         call.call_status = outcome.status

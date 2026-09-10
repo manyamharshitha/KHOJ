@@ -13,13 +13,14 @@ kind of token, so they are all one code path.
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
 from firebase_admin import auth as fb_auth
 
 from app.config import settings
-from app.firebase import _app
+from app.firebase import _app, has_service_credential
 from app.core.plans import DEFAULT_TIER, Tier, limit_for, normalise_tier
 from app import repositories as repo
 from app.models import UserProfile, as_utc, utcnow
@@ -51,6 +52,26 @@ def _bearer(authorization: str | None) -> str | None:
     return token.strip() if scheme.lower() == "bearer" and token.strip() else None
 
 
+@lru_cache(maxsize=1)
+def _revocation_checked() -> bool:
+    """Whether tokens can be checked against revocation, said once.
+
+    Cached for the log line as much as for the answer: this is consulted on
+    every authenticated request, and a warning repeated per request buries the
+    startup lines that explain how to fix it.
+    """
+    available = has_service_credential()
+    if not available:
+        log.warning(
+            "auth: verifying tokens WITHOUT a revocation check — no service "
+            "account is configured, so a token stays valid until it expires "
+            "(up to an hour) even after the user signs out. Signature, audience "
+            "and expiry are still enforced. Mount FIREBASE_CREDENTIALS_FILE to "
+            "close that window."
+        )
+    return available
+
+
 def verify_google_token(id_token: str) -> dict[str, Any]:
     """Verify a Firebase ID token and return its claims.
 
@@ -72,7 +93,22 @@ def verify_google_token(id_token: str) -> dict[str, Any]:
         # only exists if something else happened to initialise Firebase first,
         # so sign-in worked or failed depending on which endpoint was hit
         # first after a restart.
-        return fb_auth.verify_id_token(token, app=_app(), check_revoked=True)
+        # `check_revoked` is dropped when there is no service credential, and
+        # only then.
+        #
+        # It is worth having: without it a token stays valid for its remaining
+        # hour after the user signs out or the account is disabled. But it is a
+        # *freshness* check, and it costs an authenticated call to the Identity
+        # Toolkit API. Demanding it where no credential exists turned an
+        # optional extra into a hard prerequisite for signing in at all — every
+        # token was rejected and every caller silently became anonymous.
+        #
+        # What is never dropped is the part that decides whether the token is
+        # genuine: the signature against Google's public certificates, and the
+        # audience, issuer and expiry against this project. Those need only a
+        # project id. A revoked token surviving up to an hour is a far smaller
+        # problem than nobody being able to sign in.
+        return fb_auth.verify_id_token(token, app=_app(), check_revoked=_revocation_checked())
     except fb_auth.RevokedIdTokenError as exc:
         raise AuthError("That session has ended. Sign in again.") from exc
     except fb_auth.ExpiredIdTokenError as exc:
