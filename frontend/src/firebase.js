@@ -1,36 +1,9 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
-/**
- * Where the sign-in handler lives.
- *
- * Firebase runs sign-in through `https://<authDomain>/__/auth/handler`. Left at
- * the project default that is `khoj-cd80b.firebaseapp.com` — a different site
- * from this one — so Firebase has to hold the in-flight sign-in in storage
- * belonging to firebaseapp.com. From this page that is third-party storage, and
- * Chrome and Safari block it: the redirect goes to Google, returns, and
- * `getRedirectResult` finds nothing. The person lands back signed out with no
- * error raised anywhere.
- *
- * `vercel.json` proxies `/__/auth/*` to the Firebase handler, so in a deployed
- * build the handler is reachable on this origin and the storage is first-party.
- * Preferring the current host is therefore correct wherever that proxy is
- * deployed — and the proxy ships in the same repository as this file, so the
- * two cannot drift apart.
- *
- * In development there is no proxy, so the configured domain is used. Setting
- * VITE_FIREBASE_AUTH_DOMAIN explicitly still overrides everything, for a host
- * that serves the app without the rewrite.
- */
-const configuredAuthDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN;
-const authDomain =
-  import.meta.env.PROD && typeof window !== 'undefined'
-    ? window.location.hostname
-    : configuredAuthDomain;
-
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
@@ -50,13 +23,8 @@ const firebaseConfig = {
  * So Firebase is only constructed when the config is actually present, and
  * callers check `isFirebaseConfigured` rather than assuming `auth` exists.
  */
-// Deliberately not `firebaseConfig.authDomain`: that is derived from the
-// current host in production and so is always truthy, which would make this
-// report "configured" for a build that has no Firebase credentials at all. The
-// values that actually have to come from the environment are the key and the
-// project id.
 export const isFirebaseConfigured = Boolean(
-  firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.authDomain,
+  firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId,
 );
 
 let firebaseApp = null;
