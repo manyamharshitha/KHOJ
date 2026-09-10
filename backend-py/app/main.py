@@ -104,6 +104,24 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if settings.telephony_provider == "mock":
         log.warning("telephony is MOCK — calls are simulated, nothing is dialled")
 
+    # A browser signing people in and a server that cannot verify what it signs
+    # them in with. Nothing errors: every request arrives with a token, fails
+    # verification, and is quietly downgraded to anonymous. Sessions are then
+    # written with no owner, so the dashboard and the search history — both
+    # correctly scoped to a customer — are permanently empty, and completed work
+    # is reachable only through whatever session id the browser still holds.
+    #
+    # Said at startup because the symptom appears nowhere near the cause.
+    if not (settings.firebase_project_id or settings.firebase_credentials_file):
+        log.warning(
+            "FIREBASE IS NOT CONFIGURED — no project id and no credentials file. "
+            "Signed-in requests will be accepted as ANONYMOUS and their sessions "
+            "stored with no owner, which empties the dashboard and history. Set "
+            "FIREBASE_PROJECT_ID, or mount the service account at "
+            "FIREBASE_CREDENTIALS_FILE (currently %r).",
+            settings.firebase_credentials_file or "<unset>",
+        )
+
     # The site-visit scheduler. Only started when the database is up: with no
     # storage it would spin uselessly and log a failure every thirty seconds.
     visit_scheduler: asyncio.Task[None] | None = None

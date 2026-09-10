@@ -180,7 +180,24 @@ async def optional_user(
         return None
     try:
         return await current_user(authorization)
-    except HTTPException:
+    except HTTPException as exc:
+        # A token that was sent and rejected is not the same fact as no token,
+        # and returning None for both hid a total auth outage behind what looks
+        # like ordinary anonymous browsing.
+        #
+        # That is precisely what happened: Firebase Admin was not initialised on
+        # the server, so every signed-in request was verified, failed, and
+        # silently downgraded to anonymous. Sessions were then written with
+        # customer_id=None, the dashboard and history — correctly scoped to the
+        # customer — found nothing to show, and a completed call was reachable
+        # only through the session id the browser happened to be holding.
+        log.warning(
+            "auth: a bearer token was supplied and rejected (%s). Treating the "
+            "caller as anonymous. If this repeats for every request, token "
+            "verification is broken rather than absent — check that Firebase "
+            "Admin is initialised (GET /api/auth/config reports `ready`).",
+            getattr(exc, "detail", exc.__class__.__name__),
+        )
         return None
 
 

@@ -269,11 +269,28 @@ SIP_MEANINGS: dict[str, str] = {
         "mobile this normally means the telephony account cannot terminate "
         "calls to +91 numbers"
     ),
+    "400": "the carrier rejected the call setup as malformed",
     "403": "the carrier refused the route or the caller ID",
+    "406": (
+        "the destination network refused the call's parameters. Nothing rang. "
+        "This is usually a codec or media negotiation the carrier would not "
+        "accept, and it is decided between the two networks rather than by the "
+        "person being called"
+    ),
     "408": "it rang and nobody picked up",
+    "410": "the number is no longer in service",
     "480": "the phone was switched off or out of coverage",
+    "484": "the number was incomplete — check the digits and the country code",
     "486": "the line was engaged",
     "487": "the call was cancelled before it was answered",
+    "488": (
+        "the two networks could not agree on a codec, so no audio path could "
+        "be opened. Nothing rang"
+    ),
+    "502": "an intermediate gateway failed",
+    "504": "the carrier timed out setting the call up",
+    "600": "the person is busy on every device they have",
+    "604": "no network anywhere recognises this number",
     "503": (
         "the carrier or trunk was unavailable. Nothing rang, and this is a "
         "fault on the telephony provider's side rather than anything about "
@@ -338,14 +355,27 @@ def _map_status(task: dict[str, Any], attempt: dict[str, Any] | None) -> CallSta
     # than prose fell through to the catch-all and was recorded as whatever the
     # task status happened to be.
     numeric = {
+        # Reached the handset. The person, or their phone, is the reason.
         "408": CallStatus.NO_ANSWER,
         "480": CallStatus.NO_ANSWER,
         "486": CallStatus.BUSY,
+        "600": CallStatus.BUSY,
         "603": CallStatus.FAILED,
-        "404": CallStatus.FAILED,
+        # Never reached the handset. Nothing rang, so none of these may become
+        # NO_ANSWER — saying "nobody answered" about a call that was refused
+        # between two carriers invents an event that did not happen.
+        "400": CallStatus.FAILED,
         "403": CallStatus.FAILED,
-        "487": CallStatus.CANCELLED,
+        "404": CallStatus.FAILED,
+        "406": CallStatus.FAILED,
+        "410": CallStatus.FAILED,
+        "484": CallStatus.FAILED,
+        "488": CallStatus.FAILED,
+        "502": CallStatus.FAILED,
         "503": CallStatus.FAILED,
+        "504": CallStatus.FAILED,
+        "604": CallStatus.FAILED,
+        "487": CallStatus.CANCELLED,
     }
     if code in numeric:
         return numeric[code]

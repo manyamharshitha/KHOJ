@@ -78,3 +78,24 @@ def test_404_is_failed_and_never_no_answer() -> None:
 
 def test_487_is_cancelled() -> None:
     assert _map_status({"status": "failed"}, {"failure_code": "487"}) is CallStatus.CANCELLED
+
+
+def test_406_is_explained_rather_than_shown_as_a_bare_number() -> None:
+    """It reached production as 'provider code 406', which explains nothing."""
+    message = describe_failure({"status": "failed"}, {"failure_code": "406"})
+    assert "406" in message
+    assert "provider code 406" not in message
+    assert "refused the call's parameters" in message
+
+
+def test_a_call_refused_between_carriers_is_never_no_answer() -> None:
+    """Nothing rang, so nobody declined to answer."""
+    for code in ("400", "406", "410", "484", "488", "502", "504", "604"):
+        status = _map_status({"status": "failed"}, {"failure_code": code})
+        assert status is CallStatus.FAILED, f"SIP {code} should be FAILED, got {status}"
+
+
+def test_handset_side_codes_stay_handset_side() -> None:
+    """These did reach the phone, and must not be reported as system faults."""
+    assert _map_status({"status": "failed"}, {"failure_code": "480"}) is CallStatus.NO_ANSWER
+    assert _map_status({"status": "failed"}, {"failure_code": "600"}) is CallStatus.BUSY
