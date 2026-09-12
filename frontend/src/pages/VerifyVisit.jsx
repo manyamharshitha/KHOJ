@@ -163,6 +163,8 @@ const VerifyVisit = () => {
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
   const streamRef = useRef(null);
+  //: The live LiveKit room, when streaming rather than recording.
+  const roomRef = useRef(null);
 
   const [context, setContext] = useState(null);
   const [loadError, setLoadError] = useState(null);
@@ -197,6 +199,11 @@ const VerifyVisit = () => {
   useEffect(
     () => () => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
+      // Disconnecting also releases the camera the room opened, which
+      // `streamRef` never held — without this the indicator light stays on
+      // after a live session, which is exactly as alarming as it sounds.
+      roomRef.current?.disconnect().catch(() => {});
+      roomRef.current = null;
     },
     [],
   );
@@ -236,8 +243,86 @@ const VerifyVisit = () => {
     [token],
   );
 
+  /**
+   * Stream live to LiveKit, which is the whole point of this page.
+   *
+   * A recorded file can be one made last year at a different flat. A live
+   * WebRTC session cannot: the broker is connected in real time from the
+   * device whose GPS we read while it is running, and the room is recorded
+   * server-side rather than trusted from the client.
+   *
+   * Returns false when live video is unavailable — the server has no LiveKit
+   * configured, or the connection cannot be made — so the caller can fall back
+   * to recording and uploading. A broker on a train with one bar should not be
+   * told to come back later; a worse artefact beats none.
+   */
+  const startLive = useCallback(async () => {
+    let joined;
+    try {
+      const res = await fetch(`${API}/api/visits/token/${token}/live`, { method: 'POST' });
+      if (res.status === 503) return false; // not configured — fall back quietly
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setProblem(body.detail || 'This link is not valid.');
+        setPhase('error');
+        return true; // handled: a 409 is a real answer, not a reason to fall back
+      }
+      joined = body;
+    } catch {
+      return false;
+    }
+
+    let room;
+    try {
+      const { Room } = await import('livekit-client');
+      room = new Room({ adaptiveStream: true, dynacast: true });
+      roomRef.current = room;
+      await room.connect(joined.url, joined.token);
+      await room.localParticipant.enableCameraAndMicrophone();
+
+      // Show the broker their own camera, so they can see what is being sent.
+      const track = [...room.localParticipant.videoTrackPublications.values()][0]?.videoTrack;
+      if (track && videoRef.current) track.attach(videoRef.current);
+    } catch {
+      // Connected to nothing, or the browser refused the camera. Tear down
+      // before falling back, or two sessions fight over the same camera.
+      try {
+        await roomRef.current?.disconnect();
+      } catch {
+        /* already gone */
+      }
+      roomRef.current = null;
+      return false;
+    }
+
+    setPhase('recording');
+    setLeft(CLIP_SECONDS);
+
+    // The fix is posted while the stream is live, not after. That is the claim
+    // being made — this device was at these coordinates *as it streamed*. A
+    // position sent afterwards proves only where somebody stood later.
+    void (async () => {
+      const position = await getPosition();
+      if (!position) return;
+      try {
+        await fetch(
+          `${API}/api/visits/token/${token}/location?lat=${position.lat}&lng=${position.lng}`,
+          { method: 'POST' },
+        );
+      } catch {
+        /* the server judges on what it has; a lost fix is not a failed visit */
+      }
+    })();
+
+    return true;
+  }, [token]);
+
   const start = useCallback(async () => {
     setProblem(null);
+
+    // Live first, recording second.
+    if (await startLive()) return;
+
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -274,22 +359,40 @@ const VerifyVisit = () => {
     recorder.start();
     setPhase('recording');
     setLeft(CLIP_SECONDS);
-  }, [left, upload]);
+  }, [left, upload, startLive]);
+
+  /**
+   * End the session, whichever kind it is.
+   *
+   * A live room ends by disconnecting — the recording and the verdict are the
+   * server's job from there, arriving over the LiveKit webhook, so there is
+   * nothing to upload and nothing to wait for. A recorded clip ends by stopping
+   * the recorder, whose `onstop` uploads it.
+   */
+  const finish = useCallback(() => {
+    if (roomRef.current) {
+      const room = roomRef.current;
+      roomRef.current = null;
+      room.disconnect().catch(() => {});
+      setOutcome({ live: true });
+      setPhase('done');
+      return;
+    }
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+  }, []);
 
   // The countdown, and the automatic stop at zero.
   useEffect(() => {
     if (phase !== 'recording') return undefined;
     if (left <= 0) {
-      recorderRef.current?.state === 'recording' && recorderRef.current.stop();
+      finish();
       return undefined;
     }
     const id = setTimeout(() => setLeft((n) => n - 1), 1000);
     return () => clearTimeout(id);
-  }, [phase, left]);
+  }, [phase, left, finish]);
 
-  const stopEarly = () => {
-    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
-  };
+  const stopEarly = finish;
 
   if (loadError) {
     return (
@@ -315,9 +418,15 @@ const VerifyVisit = () => {
           <>
             <Title>Thank you — video received.</Title>
             <Note>
-              {outcome?.verified
-                ? 'The location matched the property address. Nothing further is needed.'
-                : 'It has been passed to the person who asked for it. Nothing further is needed.'}
+              {/* A live session has no verdict yet. It is decided when the
+                  recording finishes on the server, which is seconds away and
+                  not worth holding the broker here for — so this says what has
+                  happened rather than claiming a result it does not have. */}
+              {outcome?.live
+                ? 'The stream ended and is being checked against the property address. Nothing further is needed.'
+                : outcome?.verified
+                  ? 'The location matched the property address. Nothing further is needed.'
+                  : 'It has been passed to the person who asked for it. Nothing further is needed.'}
             </Note>
           </>
         ) : (

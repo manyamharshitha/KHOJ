@@ -52,6 +52,36 @@ const RunHead = styled.button`
   text-align: left;
 `;
 
+const Thumb = styled.img`
+  width: 4.5rem;
+  height: 3.4rem;
+  object-fit: cover;
+  border-radius: 0.5rem;
+  flex: none;
+  background: ${({ theme }) => theme.surface2};
+  border: 1px solid ${({ theme }) => theme.rule2};
+
+  @media (max-width: 560px) {
+    display: none;
+  }
+`;
+
+const SourceLink = styled.a`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: ${({ theme }) => theme.muted};
+  text-decoration: none;
+  border-bottom: 1px solid ${({ theme }) => theme.rule2};
+  padding-bottom: 1px;
+
+  &:hover {
+    color: ${({ theme }) => theme.ink};
+    border-bottom-color: currentColor;
+  }
+`;
+
 const RunInfo = styled.div`
   min-width: 0;
 
@@ -634,9 +664,30 @@ const ResultsPanel = ({ sessionId = null }) => {
         return (
           <RunCard key={run.id}>
             <RunHead onClick={() => setOpenId(open ? null : run.id)} aria-expanded={open}>
+              {run.photo && (
+                <Thumb
+                  src={run.photo}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  // The portal's image on the portal's CDN. No referrer, so the
+                  // customer's session is not announced to a third party every
+                  // time a result renders.
+                  referrerPolicy="no-referrer"
+                  // A dead CDN link, a hotlink the portal blocks, or a URL that
+                  // is no longer an image: hide the element rather than leave a
+                  // broken-image glyph in the middle of the card.
+                  onError={(e) => {
+                    e.currentTarget.hidden = true;
+                  }}
+                />
+              )}
               <RunInfo>
                 <strong>{run.address}</strong>
-                <span>{run.source}</span>
+                <span>
+                  {run.source}
+                  {run.areaSqft ? ` · ${run.areaSqft.toLocaleString('en-IN')} sq ft` : ''}
+                </span>
               </RunInfo>
               <RunMeta>
                 <span className="score">
@@ -657,6 +708,20 @@ const ResultsPanel = ({ sessionId = null }) => {
                       Language: <strong>{run.language}</strong>
                     </span>
                     {when && <span>{when}</span>}
+                    {run.link && (
+                      // noreferrer as well as noopener: the first stops the
+                      // opened page reaching back through window.opener, the
+                      // second stops Khoj being named as the referrer on a
+                      // portal the customer did not choose to tell.
+                      <SourceLink
+                        href={run.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        View on {run.source} ↗
+                      </SourceLink>
+                    )}
                     {run.authenticity != null && (
                       <span>
                         <Badge $tone={run.authenticity >= 70 ? 'good' : run.authenticity >= 45 ? 'accent' : 'bad'}>

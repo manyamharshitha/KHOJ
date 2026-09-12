@@ -98,9 +98,16 @@ async def test_a_starved_host_returns_native_listings_and_stays_alive(
 ) -> None:
     """The whole point, exercised through run_search.
 
-    No browser is launched, the process survives, and the customer gets the
+    No *browser* is launched, the process survives, and the customer gets the
     listings Khoj holds itself rather than an error — or, as before, a dead
     worker and a 503 the browser reports as CORS.
+
+    Note what is asserted and what is not. The crawl itself does run now: it
+    tries a plain HTTP GET before considering a browser, and on a small instance
+    that is the only thing it does. The earlier version of this test forbade
+    `crawl` outright, which was right when reading a page meant starting
+    Chromium and became wrong the moment it did not — it would have kept a
+    512MB instance from reading pages it can fetch in a second.
     """
     from app import pipeline, repositories as repo
     from app.models import (
@@ -111,15 +118,23 @@ async def test_a_starved_host_returns_native_listings_and_stays_alive(
         SessionStatus,
         TargetSite,
     )
+    from app.scraping import crawler as crawler_module
 
     monkeypatch.setattr(settings, "enable_headless_scraping", False)
 
-    # If anything reaches the crawler this fails loudly rather than quietly
-    # launching Chromium on the host running the tests.
-    async def must_not_run(*_a, **_k):
-        raise AssertionError("the crawler was launched on a host that refused it")
+    # The line that must not be crossed: Chromium never starts. Anything else
+    # the crawl does is allowed.
+    def must_not_launch(*_a, **_k):
+        raise AssertionError("a browser was launched on a host that refused one")
 
-    monkeypatch.setattr(pipeline, "crawl", must_not_run)
+    monkeypatch.setattr(crawler_module, "browser_session", must_not_launch)
+
+    # No network from the unit tests either: the HTTP path is exercised against
+    # real portals in test_http_reader.py, not here.
+    async def no_http(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(crawler_module, "fetch_page", no_http)
 
     session = SearchSession(
         id="ses_oom",

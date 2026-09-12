@@ -25,7 +25,7 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import Field
 
 from app.config import settings
@@ -54,6 +54,13 @@ from app.repositories import (
     visit_for_token,
 )
 from app.routes.notifications import notify
+from app.services.live_video import (
+    LiveVideoUnavailable,
+    broker_token,
+    start_recording,
+    verify_webhook,
+    visit_id_from_room,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/visits", tags=["visits"])
@@ -185,6 +192,37 @@ async def send_request(visit_id: str, user: OptionalUser) -> dict[str, object]:
     return {"sent": result.sent, "reason": result.reason, "link": link}
 
 
+def decide_outcome(
+    visit: SiteVisit, captured: GeoPoint | None, now: datetime
+) -> tuple[SiteVisitStatus, float | None]:
+    """What the evidence proves, and how far off the location was.
+
+    Shared by the upload and the live paths on purpose. Two copies of this would
+    drift, and the drift would be silent: a property could come out verified
+    over one route and flagged over the other from identical evidence, which is
+    the kind of inconsistency nobody notices until a renter is standing outside
+    the wrong building.
+
+    Order matters. Lateness is a fact about when this arrived; a GPS mismatch is
+    a judgement about a noisy sensor. The certain one is reported first.
+    """
+    distance: float | None = None
+    if captured and visit.expected_point:
+        distance = haversine_m(
+            visit.expected_point.lat, visit.expected_point.lng, captured.lat, captured.lng
+        )
+
+    if now > visit.scheduled_for + timedelta(minutes=settings.site_visit_grace_minutes):
+        return SiteVisitStatus.LATE_SUBMISSION, distance
+    if distance is None:
+        # No phone GPS, or an address that could not be geocoded. Received, not
+        # verified — the difference is the whole product.
+        return SiteVisitStatus.VIDEO_RECEIVED, distance
+    if distance > settings.site_visit_radius_m:
+        return SiteVisitStatus.GPS_MISMATCH, distance
+    return SiteVisitStatus.VERIFIED, distance
+
+
 @router.get("/token/{token}")
 async def capture_page_context(token: str) -> dict[str, object]:
     """What the broker's phone needs to render the capture page.
@@ -255,27 +293,8 @@ async def upload(
 
     now = utcnow()
     captured = GeoPoint(lat=lat, lng=lng) if lat is not None and lng is not None else None
-
-    distance: float | None = None
-    if captured and visit.expected_point:
-        distance = haversine_m(
-            visit.expected_point.lat, visit.expected_point.lng, captured.lat, captured.lng
-        )
-
-    late = now > visit.scheduled_for + timedelta(minutes=settings.site_visit_grace_minutes)
-
-    # Order matters. Lateness is a fact about this upload; a GPS mismatch is a
-    # judgement about a noisy sensor. Report the certain one first.
-    if late:
-        outcome = SiteVisitStatus.LATE_SUBMISSION
-    elif distance is None:
-        # Nothing to compare against - no phone GPS, or an address that could not
-        # be geocoded. Received, not verified.
-        outcome = SiteVisitStatus.VIDEO_RECEIVED
-    elif distance > settings.site_visit_radius_m:
-        outcome = SiteVisitStatus.GPS_MISMATCH
-    else:
-        outcome = SiteVisitStatus.VERIFIED
+    outcome, distance = decide_outcome(visit, captured, now)
+    late = outcome is SiteVisitStatus.LATE_SUBMISSION
 
     updated = await update_site_visit(
         visit.id,
@@ -313,6 +332,157 @@ async def upload(
         "distance_m": round(distance) if distance is not None else None,
         "verified": outcome is SiteVisitStatus.VERIFIED,
     }
+
+
+# --------------------------------------------------------------------------
+# live video
+# --------------------------------------------------------------------------
+
+
+@router.post("/token/{token}/live")
+async def start_live(token: str) -> dict[str, object]:
+    """Mint a join token so the broker can stream, and start recording.
+
+    Unauthenticated, like the upload beside it: the broker has no Khoj account
+    and the link is the credential. The LiveKit token minted here is narrower
+    still — one room, publish only, and it expires in minutes.
+    """
+    visit = await visit_for_token(token)
+    if visit is None:
+        raise HTTPException(status_code=404, detail="That link is not valid.")
+    if visit.status in (SiteVisitStatus.VERIFIED, SiteVisitStatus.VIDEO_RECEIVED):
+        raise HTTPException(status_code=409, detail="This property has already been verified.")
+
+    try:
+        session = broker_token(visit.id)
+    except LiveVideoUnavailable as exc:
+        # 503 rather than 500: nothing is broken, the server simply has no live
+        # video configured, and the page can offer the upload instead.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    await start_recording(visit.id)
+    await update_site_visit(visit.id, status=SiteVisitStatus.STREAMING.value)
+
+    log.info("visit %s: live session opened in room %s", visit.id, session.room)
+    return {
+        "url": session.url,
+        "token": session.token,
+        "room": session.room,
+        "expires_in_minutes": session.expires_in_minutes,
+        "address": visit.property_address,
+    }
+
+
+@router.post("/token/{token}/location")
+async def report_location(token: str, lat: float, lng: float) -> dict[str, object]:
+    """Record where the phone says it is, while the stream is running.
+
+    Posted during the session rather than after it, because that is the claim
+    being made: the device was at these coordinates *at the moment it was
+    streaming*. A fix sent afterwards proves only where somebody stood later.
+    """
+    visit = await visit_for_token(token)
+    if visit is None:
+        raise HTTPException(status_code=404, detail="That link is not valid.")
+
+    captured = GeoPoint(lat=lat, lng=lng)
+    distance: float | None = None
+    if visit.expected_point:
+        distance = haversine_m(
+            visit.expected_point.lat, visit.expected_point.lng, captured.lat, captured.lng
+        )
+
+    await update_site_visit(
+        visit.id,
+        captured_point=captured.to_document(),
+        captured_at=utcnow(),
+        distance_m=distance,
+    )
+    return {
+        "distance_m": round(distance) if distance is not None else None,
+        # Told to the broker so they can move outside if the fix is poor, rather
+        # than finishing a stream that was never going to pass.
+        "within_range": distance is not None and distance <= settings.site_visit_radius_m,
+    }
+
+
+@router.post("/webhook/livekit")
+async def livekit_webhook(request: Request) -> dict[str, object]:
+    """LiveKit tells us the room ended or the recording finished.
+
+    Signature-checked before the body is read. This endpoint is what moves a
+    visit to verified, so an unauthenticated version of it would let anyone mark
+    any property verified by posting JSON.
+    """
+    body = await request.body()
+    try:
+        event = verify_webhook(body, request.headers.get("Authorization"))
+    except LiveVideoUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - a bad signature is not our error
+        log.warning("livekit webhook rejected: %s", exc)
+        raise HTTPException(status_code=401, detail="Unsigned or invalid webhook.") from exc
+
+    name = getattr(event, "event", "")
+    room = getattr(getattr(event, "room", None), "name", "") or ""
+    visit_id = visit_id_from_room(room)
+    if not visit_id:
+        # Some other room on the same LiveKit project. Not ours, not an error.
+        return {"ignored": name}
+
+    visit = await get_site_visit(visit_id)
+    if visit is None:
+        log.warning("livekit webhook for unknown visit %s", visit_id)
+        return {"ignored": "unknown visit"}
+
+    if name == "egress_ended":
+        egress = getattr(event, "egress_info", None)
+        files = list(getattr(egress, "file_results", None) or [])
+        location = getattr(files[0], "location", None) if files else None
+        duration_ns = getattr(files[0], "duration", 0) if files else 0
+
+        outcome, distance = decide_outcome(visit, visit.captured_point, utcnow())
+        await update_site_visit(
+            visit.id,
+            status=outcome.value,
+            video_url=location,
+            video_seconds=(duration_ns / 1_000_000_000) if duration_ns else None,
+            distance_m=distance,
+        )
+        await notify(
+            visit.requested_by,
+            NotificationType.VISIT_COMPLETE,
+            _OUTCOME_MESSAGE[outcome],
+            visit.id,
+        )
+        log.info("visit %s: live recording finished — %s", visit.id, outcome.value)
+        return {"visit": visit.id, "status": outcome.value}
+
+    if name == "room_finished" and visit.status is SiteVisitStatus.STREAMING:
+        # The stream ended and no recording is coming — either recording is off,
+        # or egress failed. The session still happened, so it is judged on the
+        # GPS fix taken while it was live rather than discarded.
+        outcome, distance = decide_outcome(visit, visit.captured_point, utcnow())
+        await update_site_visit(visit.id, status=outcome.value, distance_m=distance)
+        await notify(
+            visit.requested_by,
+            NotificationType.VISIT_COMPLETE,
+            _OUTCOME_MESSAGE[outcome],
+            visit.id,
+        )
+        log.info("visit %s: live session ended — %s", visit.id, outcome.value)
+        return {"visit": visit.id, "status": outcome.value}
+
+    return {"ignored": name}
+
+
+#: What the renter is told, per outcome. One phrasing, used by both paths.
+_OUTCOME_MESSAGE = {
+    SiteVisitStatus.VERIFIED: "Video verified - the location matched.",
+    SiteVisitStatus.GPS_MISMATCH: "Video received, but the location did not match.",
+    SiteVisitStatus.LATE_SUBMISSION: "Video arrived after the agreed window.",
+    SiteVisitStatus.VIDEO_RECEIVED: "Video received. The location could not be checked.",
+}
 
 
 @router.post("/{visit_id}/override")

@@ -217,7 +217,21 @@ export function useSearch() {
   const [error, setError] = useState(null);
   const cancelled = useRef(false);
 
-  useEffect(() => () => { cancelled.current = true; }, []);
+  // Reset on mount as well as set on unmount, and the reset is the load-bearing
+  // half.
+  //
+  // With only the cleanup, StrictMode's development double-mount — mount,
+  // unmount, remount — left this true for the life of the page, because
+  // nothing ever set it back. Every guard below then failed closed: the status
+  // was set to 'running' once and never updated again, so `isBusy` stayed true
+  // for ever and the button read "Searching properties..." while the backend
+  // had long since finished and written its results.
+  useEffect(() => {
+    cancelled.current = false;
+    return () => {
+      cancelled.current = true;
+    };
+  }, []);
 
   const start = useCallback(
     async ({

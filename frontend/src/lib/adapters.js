@@ -93,6 +93,23 @@ function maskPhone(phone) {
  *
  * @param {object} result  a `ListingResult` from GET /api/session/{id}/results
  */
+/**
+ * A URL, if it is one we are willing to put in an href or an img src.
+ *
+ * Only http and https. `javascript:` in an href executes on click, and `data:`
+ * can carry an SVG with script in it — both arrive here from a page Khoj did
+ * not write, which is the whole reason to check.
+ */
+function safeHttpUrl(value) {
+  if (typeof value !== 'string' || !value) return null;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:' ? value : null;
+  } catch {
+    return null; // not a URL at all
+  }
+}
+
 export function toRunCard(result) {
   // A destructuring default only fires for `undefined`, so `listing: null` from
   // the server sailed straight through and threw on the first property read
@@ -130,6 +147,17 @@ export function toRunCard(result) {
       email: null,
       isBroker: listing.is_broker ?? null,
     },
+
+    // The page this property was read from, and its photograph.
+    //
+    // Both are filtered to http(s) here as well as on the server. The server is
+    // the real guard — it checks the URL actually appeared on the page — but
+    // this value reaches an href and an <img src>, and a `javascript:` string
+    // in an href runs on click. Two cheap checks for a class of bug that is
+    // expensive exactly once.
+    link: safeHttpUrl(listing.url),
+    photo: safeHttpUrl(listing.image_url),
+    areaSqft: Number.isFinite(listing.area_sqft) ? listing.area_sqft : null,
 
     answers: answers.filter((a) => a.a),
     unmatched,

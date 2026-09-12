@@ -31,6 +31,16 @@ from app.repositories import (
 
 log = logging.getLogger(__name__)
 
+#: Whether the "SMS is not configured" warning has already been said.
+#:
+#: The visits stay in SCHEDULED deliberately, so an unconfigured server finds
+#: the same rows due on every tick and warned about them every thirty seconds,
+#: for ever. It is unactionable after the first time and it buries the lines
+#: that are not — a Firebase misconfiguration and an auth outage were both sat
+#: underneath this one in a real log.
+#:
+#: Reset when SMS appears, so configuring it mid-run is still reported.
+_warned_about_sms = False
 #: How often to look. A minute either side of the agreed time is imperceptible
 #: to a person waiting for a text, and this is one indexed count query.
 POLL_SECONDS = 30.0
@@ -67,13 +77,27 @@ async def _tick() -> int:
     if not visits:
         return 0
 
+        global _warned_about_sms
+
     if not sms_available():
-        # Once per tick, not once per visit: an unconfigured server would
-        # otherwise fill the log with the same line for every pending row.
-        log.warning(
-            "scheduler: %d visit(s) are due but SMS is not configured", len(visits)
-        )
+        # Once per process, not once per tick. Nothing changes between ticks:
+        # the same rows are due, for the same reason, and no amount of
+        # repetition makes it more fixable.
+        if not _warned_about_sms:
+            log.warning(
+                "scheduler: %d visit(s) are due but SMS is not configured. These "
+                "will not be sent, and this is the last time it will be said "
+                "until SMS is available. Set RUN_VISIT_SCHEDULER=false to stop "
+                "the loop entirely.",
+                len(visits),
+            )
+            _warned_about_sms = True
         return 0
+
+    # SMS came back. Say so, and arm the warning again in case it goes away.
+    if _warned_about_sms:
+        log.info("scheduler: SMS is configured again — resuming site-visit requests")
+        _warned_about_sms = False
 
     sent = 0
     for visit in visits:

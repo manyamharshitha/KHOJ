@@ -21,11 +21,38 @@ class SiteSpec:
     note: str
     path_slug: bool = False
 
-    def search_url(self, query: str) -> str:
+    def search_url(self, query: str, *, locality: str = "", city: str = "") -> str:
+        """The page to fetch for this search.
+
+        Three placeholders, because one was not enough and the shortfall was
+        silent. ``{q}`` is the whole query as before; ``{locality}`` and
+        ``{city}`` are the parts, for the portals that address them separately.
+
+        NoBroker is the case that forced it: its rental pages are keyed
+        ``<locality>_<city>``, and a URL carrying only the city answers 410
+        Gone. The crawler recorded a dead page and the search came back empty,
+        which reads as a broken crawler rather than a malformed URL. Measured
+        on 2026-09-11:
+
+            /2bhk-flats-for-rent-in-yelahanka_bangalore   200
+            /2bhk-flats-for-rent-in-bangalore             410
+
+        Note the underscore between the two, which is why they are separate
+        placeholders rather than one slug — the separator differs per portal,
+        and RealEstateIndia puts the city in a different path segment entirely.
+        """
         if self.path_slug:
-            slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")
-            return self.base + self.search_path.format(q=slug)
-        return self.base + self.search_path.format(q=quote_plus(query))
+            return self.base + self.search_path.format(
+                q=_slug(query), locality=_slug(locality), city=_slug(city)
+            )
+        return self.base + self.search_path.format(
+            q=quote_plus(query), locality=quote_plus(locality), city=quote_plus(city)
+        )
+
+
+def _slug(value: str) -> str:
+    """Lowercase, hyphen-separated, safe to drop into a path segment."""
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
 log = logging.getLogger(__name__)
@@ -34,11 +61,46 @@ SITES: dict[str, SiteSpec] = {
     "nobroker": SiteSpec(
         key="nobroker",
         name="NoBroker",
+        # The locality-slug page, not the query endpoint.
+        #
+        # `/property/rent/search?searchParam=` returned a shell whose listings
+        # were drawn by script, which is what the old note here recorded. The
+        # slug form serves the listings in the HTML, each with its own
+        # /property/<slug>/<id>/detail link — twenty-five of them for Yelahanka
+        # on 2026-09-11.
         base="https://www.nobroker.in",
-        search_path="/property/rent/search?searchParam={q}",
+        # Underscore between locality and city, and it is load-bearing: the
+        # hyphen form only redirects and the city alone is 410.
+        search_path="/2bhk-flats-for-rent-in-{locality}_{city}",
+        path_slug=True,
         contact_gated=True,
         note=(
-            "Serves only a page shell to automated readers; listings never render. Paste a listing URL instead."
+            "Listings and their links are readable. Phone numbers sit behind a "
+            "login, so Khoj cannot call these for you."
+        ),
+    ),
+    "realestateindia": SiteSpec(
+        key="realestateindia",
+        name="RealEstateIndia",
+        base="https://www.realestateindia.com",
+        search_path="/{city}-property/2-bhk-flats-apartments-for-rent-in-{locality}-ffid.htm",
+        path_slug=True,
+        contact_gated=True,
+        note=(
+            "Listings and their links are readable. Phone numbers sit behind a "
+            "login, so Khoj cannot call these for you."
+        ),
+    ),
+    "squareyards": SiteSpec(
+        key="squareyards",
+        name="Square Yards",
+        base="https://www.squareyards.com",
+        search_path="/rent/2-bhk-for-rent-in-{q}",
+        path_slug=True,
+        contact_gated=True,
+        note=(
+            "Rents and sizes are readable, but each listing's own link is drawn "
+            "by script and is not in the HTML, so results here carry no direct link."
         ),
     ),
     "99acres": SiteSpec(
@@ -112,6 +174,12 @@ SITE_ALIASES: dict[str, str] = {
     "no broker": "nobroker",
     "nobrokerin": "nobroker",
     "nb": "nobroker",
+    "realestateindiacom": "realestateindia",
+    "realestate": "realestateindia",
+    "rei": "realestateindia",
+    "squareyardscom": "squareyards",
+    "square": "squareyards",
+    "sy": "squareyards",
     "99 acres": "99acres",
     "99acrescom": "99acres",
     "ninetynineacres": "99acres",
@@ -195,7 +263,11 @@ def resolve_targets(
             if spec is None:
                 log.info("sites: %r does not name a portal we know", entry)
                 continue
-            url = spec.search_url(query)
+            url = spec.search_url(
+                query,
+                locality=criteria.localities[0] if criteria.localities else "",
+                city=criteria.city or "",
+            )
             if url in seen:
                 continue
             seen.add(url)

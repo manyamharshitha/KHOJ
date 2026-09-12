@@ -9,22 +9,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
+import os
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from datetime import timedelta
 
+import psutil
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 from app.core import scheduler
 from app.core.db import DatabaseNotReady, connect, disconnect, get_db
-from app.repositories import fail_orphaned_sessions
-from app.scraping.capacity import describe_host, headless_available
 from app.core.indexes import ensure_indexes
-from app.routes import auth as auth_routes
+from app.repositories import fail_orphaned_sessions
 from app.routes import (
     admin,
     brokers,
@@ -37,6 +38,8 @@ from app.routes import (
     users,
     visits,
 )
+from app.routes import auth as auth_routes
+from app.scraping.capacity import describe_host, headless_available
 from app.telephony.persona import assert_compliance
 
 logging.basicConfig(
@@ -231,19 +234,69 @@ async def root() -> dict[str, object]:
     }
 
 
+@app.get("/api/diagnostic-probe", tags=["meta"])
+def diagnostic_probe() -> dict[str, object]:
+    """Return process liveness without touching application services."""
+    process = psutil.Process(os.getpid())
+    return {
+        "status": "alive",
+        "rss_mb": process.memory_info().rss / (1024 * 1024),
+        "python_version": sys.version,
+        "env": {
+            key: value
+            for key, value in os.environ.items()
+            if "KEY" not in key and "SECRET" not in key
+        },
+    }
+
+
 @app.get("/health", tags=["meta"])
 async def health_root() -> JSONResponse:
-    """Deployment health, including whether the database actually answers.
+    """Liveness. Answers 200 for as long as this process can answer anything.
 
-    Separate from ``/api/health`` and deliberately blunt: it returns 503 when
-    the database is unreachable, so a platform health check fails the deploy
-    instead of routing traffic to an instance that will 500 on every write.
-    That is the failure mode that made the lead form look like a network error.
+    This is the path the platform probes, and it deliberately reports **only**
+    whether the process is alive — never whether the database is reachable.
+
+    It used to answer 503 when the database did not respond, on the reasoning
+    that an instance which cannot write should not receive traffic. That
+    reasoning is right for a readiness check and catastrophic for a liveness
+    one, because the platform's response to a failing liveness probe is to stop
+    routing and then restart the service. So a single slow Mongo round trip —
+    the ping is given three seconds — took the whole API down: every request
+    answered 503 while it was out of rotation, then 502 while it restarted, and
+    since neither of those reaches this application no CORS headers were
+    attached and the browser reported the outage as a CORS error. The service
+    was cycling itself, and the database was usually fine by the time it came
+    back.
+
+    Restarting a process does not repair an unreachable database. It only takes
+    the API away as well. The database's state is reported in the body, where
+    it is visible without being able to cycle the service, and readiness has
+    its own endpoint below.
+    """
+    from app.core.db import ping
+
+    return JSONResponse(
+        {
+            "status": "ok",
+            "database": settings.database_name,
+            "database_connected": await ping(),
+        }
+    )
+
+
+@app.get("/health/ready", tags=["meta"])
+async def health_ready() -> JSONResponse:
+    """Readiness. 503 while the database is unreachable.
+
+    What ``/health`` used to be, kept for monitoring and for a human checking
+    whether an instance is fit to serve. Nothing that can restart the service
+    should be pointed at this.
     """
     from app.core.db import ping_diagnostic
 
     connected, error = await ping_diagnostic()
-    body = {
+    body: dict[str, object] = {
         "status": "ok" if connected else "degraded",
         "database": settings.database_name,
         "database_connected": connected,

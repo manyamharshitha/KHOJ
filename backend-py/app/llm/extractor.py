@@ -8,6 +8,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.config import settings
 from app.llm.client import LLMError, complete_model, llm_available
 from app.models import Listing, SearchCriteria
 from app.ids import new_id
@@ -74,6 +75,14 @@ class ExtractedListing(BaseModel):
     is_broker: bool | None = None
 
     listing_url: str | None = None
+    image_url: str | None = Field(
+        default=None,
+        description=(
+            "The photograph of THIS property, copied exactly from the page. Null "
+            "if the page shows no photo for it."
+        ),
+    )
+    area_sqft: int | None = Field(default=None, ge=0, le=100_000)
 
     match_score: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
     match_reason: str = ""
@@ -117,6 +126,22 @@ Field notes:
   plausible-looking number. Some pages (a managed co-living operator's city
   listing, say) give one central number for the whole page rather than one per
   listing — if that is the only number present, use it for every listing.
+- area_sqft: the built-up or carpet area in square feet, as an integer. "1,050
+  sq.ft." is 1050. If the page gives square yards or square metres, leave it
+  null rather than converting — a converted number read as a quoted one is
+  worse than no number.
+- listing_url: the link to THIS property's own page, copied exactly. Not the
+  search page it was found on. Null if the page gives no per-listing link.
+- image_url: the photograph of THIS property, copied exactly from the page.
+  Null if there is none.
+
+  Take care over which image belongs to which listing, because these two fields
+  are the ones a mistake is least visible in. A wrong rent is caught the moment
+  she reads it; a wrong photograph is believed, and she travels across the city
+  expecting the flat in the picture. Do not reuse one listing's photo for its
+  neighbours, and never use a site logo, a banner, an advertisement, a map tile,
+  an agent's headshot or a placeholder graphic. If you are not sure a photo
+  belongs to this property, null is the answer.
 
 For each listing also judge how well it matches the customer's requirements,
 which are given to you below.
@@ -129,6 +154,25 @@ which are given to you below.
 
 If the page has no property listings on it at all, return an empty list.
 """
+
+
+def _url_on_page(candidate: str | None, page_text: str) -> str | None:
+    """The URL, if the page really contains it. Otherwise None.
+
+    The same rule the phone numbers are held to, for the same reason: a model
+    reading a page of property links will happily produce one that looks exactly
+    like the others and was on no page at all. Checking costs a substring scan.
+
+    Only http(s) survives. A `javascript:` or `data:` string reaching an href or
+    an <img src> is a scripting vector, and neither belongs in a field copied
+    off someone else's page.
+    """
+    if not candidate:
+        return None
+    url = candidate.strip()
+    if not url.lower().startswith(("http://", "https://")):
+        return None
+    return url if url in page_text else None
 
 
 async def extract_listings(
@@ -165,7 +209,11 @@ async def extract_listings(
 
     try:
         result = await complete_model(
-            system=SYSTEM, user=user, output=ExtractionResult, temperature=0.0
+            system=SYSTEM,
+            user=user,
+            output=ExtractionResult,
+            temperature=0.0,
+            max_tokens=settings.extraction_max_tokens,
         )
     except LLMError as exc:
         log.warning("extractor: %s failed (%s)", source_site, exc)
@@ -173,6 +221,7 @@ async def extract_listings(
 
     listings: list[Listing] = []
     dropped_numbers = 0
+    dropped_urls = 0
 
     for item in result.listings[:max_listings]:
         contact = None
@@ -185,12 +234,28 @@ async def extract_listings(
         if contact is None and len(page_phones) == 1 and len(result.listings) == 1:
             contact = page_phones[0]
 
+        # Held to the same standard as the phone number above: a URL is used
+        # only if it is actually on the page.
+        #
+        # A fabricated link is worse than none, and quieter. It looks right,
+        # resolves to a 404 or — worse — to some other property, and the
+        # customer concludes the listing was a lie rather than that the link
+        # was. The photograph is the same bet with a higher stake: she believes
+        # a picture in a way she never believes a number.
+        listing_link = _url_on_page(item.listing_url, page_text)
+        image = _url_on_page(item.image_url, page_text)
+        dropped_urls += (item.listing_url is not None and listing_link is None) + (
+            item.image_url is not None and image is None
+        )
+
         listings.append(
             Listing(
                 id=new_id("lst"),
                 session_id=session_id,
                 source_site=source_site,
-                url=item.listing_url or page_url, 
+                url=listing_link or page_url,
+                image_url=image,
+                area_sqft=item.area_sqft,
                 raw_excerpt=page_text[:8000],
                 title=item.title,
                 locality=item.locality,
@@ -216,6 +281,12 @@ async def extract_listings(
             "extractor: %s — dropped %d phone number(s) not present in the page",
             source_site,
             dropped_numbers,
+        )
+    if dropped_urls:
+        log.warning(
+            "extractor: %s — dropped %d link(s) or image(s) not present in the page",
+            source_site,
+            dropped_urls,
         )
     log.info("extractor: %s yielded %d listing(s)", source_site, len(listings))
     return listings

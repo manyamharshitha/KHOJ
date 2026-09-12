@@ -87,10 +87,11 @@ export const Switch = styled.button`
   border-radius: 999px;
   border: 1px solid ${({ theme, $on }) => ($on ? theme.gold : theme.rule2)};
   background: ${({ theme, $on }) => ($on ? theme.goldSoft : theme.surface2)};
-  cursor: pointer;
+  cursor: ${({ $disabled }) => ($disabled ? 'not-allowed' : 'pointer')};
+  opacity: ${({ $disabled }) => ($disabled ? 0.4 : 1)};
   padding: 0;
   flex: none;
-  transition: border-color 0.2s ease, background-color 0.2s ease;
+  transition: border-color 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
 
   &::after {
     content: '';

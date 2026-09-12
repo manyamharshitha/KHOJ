@@ -143,6 +143,33 @@ class Settings(BaseSettings):
     # --- scraping --------------------------------------------------------
     max_sites_per_search: int = 5
     max_listings_per_site: int = 25
+
+    #: Output tokens allowed when extracting listings from a page.
+    #:
+    #: Well above the 8192 default, because that default silently broke every
+    #: real extraction. Twenty-five listings, each carrying its own link and a
+    #: photograph URL — NoBroker's run to about 120 characters apiece — do not
+    #: fit. Generation stopped mid-object, the unfinished JSON failed to parse,
+    #: and the log said "the model returned malformed JSON" about a model that
+    #: had answered correctly and been cut off.
+    extraction_max_tokens: int = 32_768
+
+    #: Seconds to wait for a plain HTTP read of a listing page.
+    #:
+    #: Short, because this path has no browser to start and no scripts to run:
+    #: the portals that answer do so in about a second. A host that needs
+    #: thirty is one that is not going to answer usefully.
+    http_read_timeout_s: float = 30.0
+
+    #: Try a plain HTTP GET before starting a browser.
+    #:
+    #: The portals that work never needed the browser — their listings, links
+    #: and photographs are all in the HTML before any script runs. Reading them
+    #: this way costs a few megabytes instead of Chromium's four hundred, which
+    #: is the difference between a search that works on a 512MB instance and one
+    #: that is switched off there. The browser still runs for pages this cannot
+    #: read, when there is memory for it.
+    http_first: bool = True
     scrape_timeout_ms: int = 30_000
     scrape_concurrency: int = 3
 
@@ -246,6 +273,44 @@ class Settings(BaseSettings):
     #: Public base URL used to build the link inside the SMS. Must be reachable
     #: from the broker's phone, so localhost only works in local testing.
     public_base_url: str = "http://localhost:5173"
+
+    # ----------------------------------------------------------------------
+    # live video verification (LiveKit)
+    # ----------------------------------------------------------------------
+
+    #: LiveKit server URL, e.g. wss://something.livekit.cloud
+    #:
+    #: The whole point of streaming rather than accepting an upload is that a
+    #: live session cannot be a file recorded last year at a different flat. The
+    #: broker is connected, in real time, from a device we are simultaneously
+    #: reading a GPS fix from.
+    livekit_url: str = ""
+    livekit_api_key: str = ""
+    livekit_api_secret: str = ""
+
+    #: How long a broker's join token stays usable, in minutes.
+    #:
+    #: Short. It is minted when they open the link and they are expected to be
+    #: standing in the property; a token that lives for hours is one that can be
+    #: forwarded to somebody who is not.
+    livekit_token_ttl_minutes: int = 20
+
+    #: Record the session server-side.
+    #:
+    #: Off unless a bucket is configured, because egress with nowhere to write
+    #: fails the room rather than the recording. Without it the session still
+    #: proves someone was live at those coordinates — it just leaves no artefact
+    #: to review afterwards, which is a real loss and worth turning on.
+    livekit_record: bool = False
+
+    #: GCS bucket for recordings. The Firebase bucket already configured for
+    #: this project is a GCS bucket and works here.
+    livekit_recording_bucket: str = ""
+
+    @property
+    def livekit_ready(self) -> bool:
+        """Whether a live session can actually be started."""
+        return bool(self.livekit_url and self.livekit_api_key and self.livekit_api_secret)
 
     #: Whether this process runs the site-visit scheduler.
     #:

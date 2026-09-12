@@ -243,20 +243,31 @@ async def _run_search(session: SearchSession) -> None:
                     "rent, the locality and a contact number.",
                 )
                 return
-        elif not (capacity := headless_available())[0]:
-            # Asked before the browser starts, because afterwards is too late.
-            #
-            # Chromium wants ~400MB at launch. On an instance that does not have
-            # it the kernel answers SIGKILL, which no `except` can catch — the
-            # process vanishes mid-request and every other customer's call and
-            # search goes with it. Declining to start the browser costs this one
-            # search its portal results. Starting it costs the whole service.
-            log.warning("[%s] headless crawling skipped — %s", sid, capacity[1])
-            crawl_skipped = capacity[1]
-
         else:
+            # The crawl is always attempted now, whatever the memory.
+            #
+            # This used to be gated on `headless_available()` and skipped
+            # outright on a small instance, back when reading a page meant
+            # starting Chromium. It no longer does: `crawl` tries a plain HTTP
+            # GET first, and the portals that work — NoBroker, RealEstateIndia,
+            # Square Yards — serve their listings, links and photographs in the
+            # HTML before any script runs. That costs a few megabytes instead of
+            # four hundred.
+            #
+            # So the memory question moved inside `crawl`, where it belongs: it
+            # decides per site whether a browser is needed and whether one can
+            # be started. Asking it out here meant a 512MB instance skipped
+            # pages it could have read in a second.
             await set_session_status(sid, SessionStatus.SCRAPING)
             pages = await crawl(session.target_sites)
+
+            blocked_for_memory = [
+                p
+                for p in pages
+                if p.status is ListingSourceStatus.BLOCKED and "memory" in p.note
+            ]
+            if blocked_for_memory and len(blocked_for_memory) == len(pages):
+                crawl_skipped = headless_available()[1]
 
             ok = (ListingSourceStatus.OK, ListingSourceStatus.CONTACT_GATED)
             readable = [p for p in pages if p.status in ok]
@@ -267,11 +278,14 @@ async def _run_search(session: SearchSession) -> None:
                     )
 
             if not readable:
-                # Not fatal when Khoj's own listings were also asked for: those
-                # are fetched below and are a real result. Failing the whole
-                # search because a portal blocked us would throw away listings
-                # that were never going to come from that portal anyway.
-                if not session.include_native:
+                # Not fatal when Khoj's own listings can stand in — either
+                # because they were asked for, or because the only thing that
+                # stopped the portals was this server's memory.
+                #
+                # A memory limit is ours, not the customer's, and FAILED would
+                # hide the listings Khoj does hold behind an error card for a
+                # shortfall she cannot see and did not cause.
+                if not session.include_native and not crawl_skipped:
                     await update_session(
                         sid,
                         status=SessionStatus.FAILED.value,

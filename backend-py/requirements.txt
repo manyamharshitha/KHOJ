@@ -1,6 +1,7 @@
 # Web
 fastapi>=0.115
 uvicorn[standard]>=0.32
+psutil>=6.1
 python-multipart>=0.0.12
 
 # Config & models
@@ -11,8 +12,12 @@ python-dotenv>=1.0
 # Firebase: Firestore for documents, Storage for call artefacts
 firebase-admin>=6.6
 
-# Telephony — CALL-E. Not Twilio, LiveKit, Vapi or Bland.
+# Telephony — CALL-E. Not Twilio, Vapi or Bland.
 calle-ai>=0.1
+
+# Live video verification. LiveKit is the WebRTC transport for the site-visit
+# stream — unrelated to telephony, which stays with CALL-E above.
+livekit-api>=0.8
 
 # LLM. Gemini by default; OpenAI is a drop-in via LLM_PROVIDER.
 google-genai>=0.3

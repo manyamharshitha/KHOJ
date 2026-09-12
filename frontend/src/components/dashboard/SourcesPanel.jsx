@@ -266,8 +266,17 @@ const SourcesPanel = ({ onNavigate }) => {
     onNavigate?.('questions');
   };
 
+  // A portal that refuses automated readers cannot be switched on. It stays
+  // visible and labelled — the answer to "why isn't 99acres here?" should be on
+  // the screen rather than absent — but enabling it would only spend the
+  // per-site timeout to be told 403 again, and make the search slower for
+  // everything else in the list.
   const toggleSource = (id) =>
-    setSources((prev) => prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)));
+    setSources((prev) =>
+      prev.map((s) =>
+        s.id === id && s.reach !== 'refused' ? { ...s, enabled: !s.enabled } : s,
+      ),
+    );
 
   const addCustom = (e) => {
     e.preventDefault();
@@ -322,12 +331,40 @@ const SourcesPanel = ({ onNavigate }) => {
               <span>{s.note || s.url}</span>
             </SourceInfo>
             <Right>
-              {/* What the badge reports is whether Khoj can *call* what it
-                  finds there — every source in this list can be searched. */}
-              <Badge $tone={s.native ? 'good' : s.contactGated ? 'muted' : 'accent'}>
-                {s.native ? 'On Khoj' : s.contactGated ? 'Listings only' : 'Callable'}
+              {/* Two different facts, and the unreachable one comes first.
+                  Whether Khoj can *call* what it finds is worth knowing, but
+                  only once it can read the page at all. */}
+              <Badge
+                $tone={
+                  s.reach === 'refused'
+                    ? 'muted'
+                    : s.native
+                      ? 'good'
+                      : s.contactGated
+                        ? 'muted'
+                        : 'accent'
+                }
+              >
+                {s.reach === 'refused'
+                  ? 'Blocks Khoj'
+                  : s.native
+                    ? 'On Khoj'
+                    : s.contactGated
+                      ? 'Listings only'
+                      : 'Callable'}
               </Badge>
-              <Switch $on={s.enabled} onClick={() => toggleSource(s.id)} aria-label={`Toggle ${s.name}`} />
+              <Switch
+                $on={s.enabled}
+                $disabled={s.reach === 'refused'}
+                onClick={() => toggleSource(s.id)}
+                aria-label={`Toggle ${s.name}`}
+                aria-disabled={s.reach === 'refused'}
+                title={
+                  s.reach === 'refused'
+                    ? `${s.name} refuses automated readers, so Khoj cannot search it`
+                    : undefined
+                }
+              />
             </Right>
           </CardRow>
         ))}

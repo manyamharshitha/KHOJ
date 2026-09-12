@@ -279,6 +279,15 @@ class Listing(Base):
     age_years: float | None = Field(default=None, ge=0, le=200)
     furnishing: str | None = None
     amenities: list[str] = Field(default_factory=list)
+    area_sqft: int | None = Field(default=None, ge=0, le=100_000)
+
+    #: The listing's own photograph, as published on the source page.
+    #:
+    #: Typed as HttpUrl so a relative path or a `data:` blob is rejected at the
+    #: boundary rather than reaching an <img> tag. Hotlinked rather than copied:
+    #: these are the portal's images on the portal's CDN, and storing them would
+    #: be taking something this product has no licence to keep.
+    image_url: HttpUrl | None = None
 
     contact_number: str | None = Field(default=None, description="E.164, or None if gated.")
     contact_name: str | None = None
@@ -724,6 +733,13 @@ class SiteVisitStatus(StrEnum):
 
     SCHEDULED = "scheduled"
     SMS_SENT = "sms_sent"
+    #: The broker has joined the live room and is streaming right now.
+    #:
+    #: Its own state because it is the one that can be abandoned. A visit that
+    #: sits in STREAMING with nobody connected is a broker who opened the link,
+    #: started, and walked away — which is a different thing from never having
+    #: opened it, and reads differently to whoever is chasing them.
+    STREAMING = "streaming"
     VIDEO_RECEIVED = "video_received"
     VERIFIED = "verified"
     GPS_MISMATCH = "gps_mismatch"

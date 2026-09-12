@@ -34,6 +34,8 @@ from urllib.parse import urlparse
 
 from app.config import settings
 from app.models import ListingSourceStatus, TargetSite
+from app.scraping.capacity import headless_available
+from app.scraping.http_reader import fetch_page
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, Page
@@ -754,7 +756,51 @@ async def crawl(sites: list[TargetSite]) -> list[PageResult]:
     if not sites:
         return []
 
+    # Captured before `sites` is narrowed to the browser's share, so the merge
+    # at the end can return results in the order the caller asked for.
+    requested_order = [str(s.url) for s in sites]
     gate = asyncio.Semaphore(settings.scrape_concurrency)
+
+    # Plain HTTP first, browser only for what it cannot read.
+    #
+    # This is the order the survey established: NoBroker, RealEstateIndia and
+    # Square Yards all serve their listings, links and photographs in the HTML,
+    # before any script runs. A GET reads them in about a second and a few
+    # megabytes; Chromium takes thirty seconds and four hundred megabytes to
+    # reach the same text, and on a 512MB instance is not startable at all.
+    #
+    # So the browser became the fallback rather than the default. Whatever HTTP
+    # cannot read — a page that genuinely assembles itself on the client, or one
+    # needing a signed-in session to reveal a number — still goes to it, if
+    # there is memory to start it.
+    http_pages: dict[str, PageResult] = {}
+    if settings.http_first:
+        http_pages = await _read_over_http(sites, gate)
+        remaining = [s for s in sites if str(s.url) not in http_pages]
+        if not remaining:
+            log.info("crawler: all %d site(s) read over HTTP, no browser needed", len(sites))
+            return [http_pages[str(s.url)] for s in sites]
+
+        can_browse, why = headless_available()
+        if not can_browse:
+            log.warning(
+                "crawler: %d site(s) need a browser and none can be started — %s",
+                len(remaining),
+                why,
+            )
+            return [
+                http_pages.get(str(s.url))
+                or PageResult(
+                    site=s,
+                    status=ListingSourceStatus.BLOCKED,
+                    note=(
+                        f"{s.name} needs a browser to read and this server does "
+                        "not have the memory to start one."
+                    ),
+                )
+                for s in sites
+            ]
+        sites = remaining
 
     def all_failed(note: str) -> list[PageResult]:
         return [
@@ -828,4 +874,61 @@ async def crawl(sites: list[TargetSite]) -> list[PageResult]:
             )
         else:
             out.append(result)
+
+    # Whatever HTTP already read goes back in, in the order the caller asked
+    # for. `sites` was narrowed to the browser's share above, so returning only
+    # `out` would silently drop every page the cheap path had succeeded on.
+    if http_pages:
+        by_url = {str(p.site.url): p for p in out}
+        by_url.update(http_pages)
+        return [by_url[u] for u in requested_order if u in by_url]
+    return out
+
+
+async def _read_over_http(
+    sites: list[TargetSite], gate: asyncio.Semaphore
+) -> dict[str, PageResult]:
+    """Read what a plain GET can, keyed by URL. Absent means "try the browser".
+
+    A site is only claimed when the page actually looks like listings. A shell
+    of navigation with no prices in it is exactly what a client-rendered portal
+    returns, and claiming that would hand the extractor an empty page and call
+    the site done — turning "we should have used the browser" into "this portal
+    had nothing", which is the more expensive mistake because it looks like an
+    answer.
+    """
+
+    async def one(site: TargetSite) -> tuple[str, PageResult] | None:
+        async with gate:
+            page = await fetch_page(str(site.url))
+        if page is None or not page.looks_like_listings:
+            return None
+
+        log.info(
+            "crawler: %s read over HTTP (%d chars, no browser)", site.name, len(page.text)
+        )
+        return str(site.url), PageResult(
+            site=site,
+            status=(
+                ListingSourceStatus.CONTACT_GATED
+                if site.contact_gated
+                else ListingSourceStatus.OK
+            ),
+            text=page.text,
+            final_url=page.url,
+            contact_gated=site.contact_gated,
+        )
+
+    settled = await asyncio.gather(
+        *(one(s) for s in sites), return_exceptions=True
+    )
+    out: dict[str, PageResult] = {}
+    for item in settled:
+        if isinstance(item, BaseException):
+            # Deliberately not fatal: this is the optimistic path, and anything
+            # it fails at simply falls through to the browser below.
+            log.debug("crawler: an HTTP read raised", exc_info=item)
+            continue
+        if item is not None:
+            out[item[0]] = item[1]
     return out

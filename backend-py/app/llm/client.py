@@ -20,6 +20,18 @@ class LLMError(RuntimeError):
     """The model could not be reached, or returned something unusable."""
 
 
+class LLMOutputTruncated(LLMError):
+    """Generation stopped at the token ceiling.
+
+    Its own type so the retry decorator can skip it. Nothing about a second
+    attempt changes the outcome: the same prompt, at the same temperature,
+    against the same ceiling, is cut off at the same place. Retrying it three
+    times spent three requests to fail three times — which on a free tier of
+    twenty requests a day is fifteen per cent of a day's budget burned on one
+    page that was never going to parse.
+    """
+
+
 class LLMUnavailable(LLMError):
     """No credentials configured for the selected provider."""
 
@@ -121,8 +133,23 @@ def _strip_fences(text: str) -> str:
     return t
 
 
+def _worth_another_attempt(exc: BaseException) -> bool:
+    """Whether a second attempt could plausibly go differently.
+
+    A transient LLMError — a timeout, a 5xx, a blip — is worth retrying. The
+    two below are not, and retrying them costs real quota to reach the same
+    answer:
+
+    * LLMOutputTruncated: deterministic. Same prompt, same ceiling, same cut.
+    * LLMUnavailable: no credentials. A third attempt will not find a key.
+    """
+    if isinstance(exc, (LLMOutputTruncated, LLMUnavailable)):
+        return False
+    return isinstance(exc, LLMError)
+
+
 @retry(
-    retry=retry_if_exception_type(LLMError),
+    retry=_worth_another_attempt,
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=8),
     reraise=True,
@@ -274,7 +301,30 @@ async def _gemini_json(
             max_output_tokens=max_tokens,
         ),
     )
+
+    # Truncation reported as truncation, not as bad JSON.
+    #
+    # A response cut off at the token ceiling is still valid JSON up to the
+    # point it stops — it simply has no closing brace, so `json.loads` calls it
+    # malformed and the real cause never appears in the log. That sent a whole
+    # extraction failure ("the model returned malformed JSON") after a model
+    # that had answered perfectly well and been cut off mid-sentence.
+    if _hit_the_ceiling(response):
+        raise LLMOutputTruncated(
+            f"the model was cut off at {max_tokens} output tokens. The answer was "
+            "not malformed, it was unfinished — raise the limit or ask for fewer "
+            "items at a time."
+        )
     return response.text or ""
+
+
+def _hit_the_ceiling(response: Any) -> bool:
+    """Whether generation stopped because it ran out of room."""
+    for candidate in getattr(response, "candidates", None) or []:
+        reason = getattr(candidate, "finish_reason", None)
+        if reason is not None and "MAX_TOKENS" in str(reason).upper():
+            return True
+    return False
 
 
 async def _openai_json(
