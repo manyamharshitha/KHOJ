@@ -14,9 +14,15 @@
  * source", on the reasoning that a listing we cannot ring is not worth showing.
  * That got the product backwards. Finding the flat is the service; the
  * verification call is what happens next, and a listing with no number is still
- * a listing the customer wants to see — they can ring it themselves. So the
- * gated portals are offered here, switched off by default and labelled, rather
- * than hidden and blocked.
+ * a listing the customer wants to see — they can ring it themselves.
+ *
+ * They were then listed but left switched off, which was the same mistake
+ * wearing a hat. A default search read only Zolo and Colive — two co-living
+ * operators that list no ordinary flats and both need a browser — so every
+ * search a customer ran without changing anything came back empty while
+ * NoBroker had twenty-five matching properties on a page Khoj reads in a
+ * second. The gated portals that actually answer are therefore on by default,
+ * and labelled so nobody expects a phone number from them.
  *
  * `reach` records what each host actually did when asked for a Yelahanka 2BHK
  * page on 2026-09-11, from a plain request with an ordinary user agent:
@@ -77,7 +83,7 @@ export const defaultSources = [
     key: 'nobroker',
     name: 'NoBroker',
     url: 'nobroker.in',
-    enabled: false,
+    enabled: true,
     readable: true,
     reach: 'open',
     contactGated: true,
@@ -88,7 +94,7 @@ export const defaultSources = [
     key: 'realestateindia',
     name: 'RealEstateIndia',
     url: 'realestateindia.com',
-    enabled: false,
+    enabled: true,
     readable: true,
     reach: 'open',
     contactGated: true,

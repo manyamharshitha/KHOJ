@@ -41,6 +41,11 @@ class SiteSpec:
         placeholders rather than one slug — the separator differs per portal,
         and RealEstateIndia puts the city in a different path segment entirely.
         """
+        # Translated to whatever this portal calls the place, not to whatever
+        # it is called now.
+        city = portal_city(city)
+        query = portal_city(query)
+
         if self.path_slug:
             return self.base + self.search_path.format(
                 q=_slug(query), locality=_slug(locality), city=_slug(city)
@@ -48,6 +53,49 @@ class SiteSpec:
         return self.base + self.search_path.format(
             q=quote_plus(query), locality=quote_plus(locality), city=quote_plus(city)
         )
+
+
+#: The name a portal files a city under, which is not always its current name.
+#:
+#: India renamed a lot of cities and the property portals largely did not follow.
+#: NoBroker and RealEstateIndia both answer 410 Gone for "bengaluru" and 200 for
+#: "bangalore" — measured on 2026-09-13:
+#:
+#:     /2bhk-flats-for-rent-in-koramangala_bengaluru   410
+#:     /2bhk-flats-for-rent-in-koramangala_bangalore   200
+#:
+#: The model writes the modern name into the criteria, correctly, and every URL
+#: built from it was dead. The search then reported "nothing matched" about
+#: pages it had never successfully opened, which is the worst kind of wrong: it
+#: looks like an answer.
+#:
+#: Mapped rather than corrected at the source, because the customer's city is
+#: hers to name. This is only how a particular portal spells it.
+_PORTAL_CITY_NAMES = {
+    "bengaluru": "bangalore",
+    "mumbai": "mumbai",  # Bombay is long gone from these URLs
+    "chennai": "chennai",
+    "kolkata": "kolkata",
+    "puducherry": "pondicherry",
+    "thiruvananthapuram": "trivandrum",
+    "kochi": "cochin",
+    "vadodara": "baroda",
+    "prayagraj": "allahabad",
+    "varanasi": "varanasi",
+    "gurugram": "gurgaon",
+    "mysuru": "mysore",
+    "mangaluru": "mangalore",
+    "belagavi": "belgaum",
+    "hubballi": "hubli",
+    "shivamogga": "shimoga",
+    "tiruchirappalli": "trichy",
+    "thoothukudi": "tuticorin",
+}
+
+
+def portal_city(value: str) -> str:
+    """The city as the portals spell it."""
+    return _PORTAL_CITY_NAMES.get(value.strip().lower(), value)
 
 
 def _slug(value: str) -> str:
@@ -169,7 +217,21 @@ SITES: dict[str, SiteSpec] = {
 }
 
 
-DEFAULT_SITE_KEYS = ["zolo", "colive"]
+#: What a search reads when the customer names no sources.
+#:
+#: The portals come first, and that is a correction rather than a preference.
+#: This was `["zolo", "colive"]` — two managed co-living operators — on the
+#: reasoning that they publish a callable number and the portals do not. The
+#: effect was that every default search returned nothing: Zolo needs a browser
+#: and times out, Colive needs one too, and neither lists ordinary flats. A
+#: customer looking for a 2BHK in Koramangala was shown zero results while
+#: NoBroker had twenty-five of them on a page Khoj can read in a second.
+#:
+#: Finding the flat is the service. Ringing it is what happens next, and a
+#: listing with no published number is still a listing she wants to see — she
+#: can call it herself. The gated portals therefore lead, and the operators
+#: stay because their numbers are the ones Khoj can actually dial.
+DEFAULT_SITE_KEYS = ["nobroker", "realestateindia", "zolo", "colive"]
 SITE_ALIASES: dict[str, str] = {
     "no broker": "nobroker",
     "nobrokerin": "nobroker",
