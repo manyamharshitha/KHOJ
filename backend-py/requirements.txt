@@ -19,6 +19,15 @@ calle-ai>=0.1
 # stream — unrelated to telephony, which stays with CALL-E above.
 livekit-api>=0.8
 
+# Messaging. Twilio carries the SMS or WhatsApp that sends a broker the
+# verification link — it places no calls; that is CALL-E's job above.
+#
+# It was imported by app/core/sms.py and listed nowhere, so every deployed
+# server answered "the Twilio SDK is not installed" no matter how the
+# credentials were set. Working locally only because a laptop happened to have
+# it, which is the kind of gap that surfaces in production and nowhere else.
+twilio>=9.0
+
 # LLM. Gemini by default; OpenAI is a drop-in via LLM_PROVIDER.
 google-genai>=0.3
 openai>=1.54

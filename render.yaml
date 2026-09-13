@@ -38,6 +38,14 @@ services:
       # means every browser request fails preflight.
       - key: FRONTEND_ORIGINS
         sync: false
+      # The frontend origin again, and not the same thing as PUBLIC_URL above:
+      # this one builds the /verify/<token> link that goes to a broker's phone,
+      # so it must point at Vercel, while PUBLIC_URL points at this API for
+      # telephony webhooks. It defaults to http://localhost:5173 in config.py,
+      # which is correct on a laptop and useless in a text message — a broker
+      # taps it and gets nothing, with no error anywhere to explain why.
+      - key: PUBLIC_BASE_URL
+        sync: false
       - key: FIRESTORE_ENTERPRISE_URI
         sync: false
       - key: DATABASE_NAME
@@ -63,6 +71,35 @@ services:
       - key: ADMIN_NOTIFICATION_EMAIL
         sync: false
       - key: RESEND_API_KEY
+        sync: false
+      # Live video verification. All three are required together — the server
+      # checks for all of them before it will open a room — so a deploy with
+      # two of the three set behaves exactly like a deploy with none: the
+      # broker is never asked for a video and nothing in the logs says why.
+      # `/api/health` reports `livekit_configured` so that is one curl to check
+      # rather than a failed verification to notice.
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      # Server-side recording of the session. Off unless the bucket below is
+      # set too: egress that cannot write anywhere fails the room, which would
+      # cost a live verification to save an artefact of it.
+      - key: LIVEKIT_RECORD
+        sync: false
+      - key: LIVEKIT_RECORDING_BUCKET
+        sync: false
+      # Twilio, which carries the SMS or WhatsApp holding the verification
+      # link. It places no calls — that is CALLE_API_KEY above.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
         sync: false
       - key: MAX_CONCURRENT_CALLS
         value: "3"

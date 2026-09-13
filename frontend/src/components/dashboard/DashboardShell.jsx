@@ -4,6 +4,7 @@ import styled from 'styled-components';
 import ThemeToggle from '../ui/ThemeToggle';
 import NotificationBell from './NotificationBell';
 import ProfileModal from './ProfileModal';
+import { initials, useAvatarImage } from './avatar';
 import { ONBOARDING_DONE_KEY, ONBOARDING_RESULT_KEY, TOUR_DONE_KEY } from '../../data/onboardingQuestions';
 
 const Shell = styled.div`
@@ -231,18 +232,14 @@ export const TABS = [
   { id: 'broker', label: 'Broker' },
 ];
 
-const initials = (name) =>
-  name
-    .trim()
-    .split(/\s+/)
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase() || 'K';
-
 const DashboardShell = ({ active, onChange, allowed, profile, onProfileChange, children }) => {
   const navigate = useNavigate();
   const [profileOpen, setProfileOpen] = useState(false);
+
+  // A Google `photoURL` fails often enough to matter, and a failed <img> is a
+  // torn-photo placeholder rather than nothing. `usable` covers both halves:
+  // the image and the circle behind it.
+  const { usable: hasPhoto, imgProps } = useAvatarImage(profile.avatar);
 
   // `allowed` is the caller's list of panel ids for this account's role. Absent
   // means show everything, which keeps the shell usable on its own and in any
@@ -270,10 +267,10 @@ const DashboardShell = ({ active, onChange, allowed, profile, onProfileChange, c
           </LogoutLink>
           <Avatar
             aria-label="Edit profile"
-            $hasImage={!!profile.avatar}
+            $hasImage={hasPhoto}
             onClick={() => setProfileOpen(true)}
           >
-            {profile.avatar ? <img src={profile.avatar} alt="" /> : initials(profile.name)}
+            {hasPhoto ? <img {...imgProps} /> : initials(profile.name)}
           </Avatar>
         </TopActions>
       </TopBar>

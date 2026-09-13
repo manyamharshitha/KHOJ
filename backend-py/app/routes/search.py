@@ -539,7 +539,13 @@ async def read_results(session_id: str, user: OptionalUser = None) -> SessionRes
     account = await require_user(user)
     tier, plan_limit, used = await read_quota(account.uid)
 
-    ranked = rank_listings(await listings_for_session(session_id))
+    # Rejects are stored alongside the matches so the reason survives, and they
+    # were being handed back as results. Split them here.
+    stored = await listings_for_session(session_id)
+    rejected = [x for x in stored if (x.ai_match_reason or "").startswith("Excluded:")]
+    matched = [x for x in stored if not (x.ai_match_reason or "").startswith("Excluded:")]
+
+    ranked = rank_listings(matched)
     listings, beyond = clip_to_plan(ranked, tier)
     calls = _best_call_per_listing(await calls_for_session(session_id))
     reports = {r.listing_id: r for r in await reports_for_session(session_id)}
@@ -557,5 +563,14 @@ async def read_results(session_id: str, user: OptionalUser = None) -> SessionRes
                 honesty=reports.get(listing.id),
             )
             for listing in listings
+        ],
+        excluded=[
+            ListingResult(
+                listing=listing,
+                total_monthly_cost=listing.total_monthly_cost,
+                call=calls.get(listing.id),
+                honesty=reports.get(listing.id),
+            )
+            for listing in rank_listings(rejected)
         ],
     )

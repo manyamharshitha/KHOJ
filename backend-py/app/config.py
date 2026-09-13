@@ -247,6 +247,23 @@ class Settings(BaseSettings):
     twilio_auth_token: str | None = None
     twilio_from_number: str | None = None
 
+    #: A WhatsApp sender, e.g. "whatsapp:+14155238886" (Twilio's sandbox).
+    #:
+    #: Offered because plain SMS to an Indian number is not something you can
+    #: switch on this afternoon. TRAI requires DLT registration — a registered
+    #: business entity, a approved sender ID, and every template cleared in
+    #: advance — before a carrier will deliver an A2P message to a +91 handset.
+    #: Twilio will accept the API call and the message simply never arrives.
+    #:
+    #: WhatsApp has none of that. The sandbox works immediately: the recipient
+    #: sends one join word, and delivery to India is ordinary. For a link the
+    #: broker is expected to tap, it is also the better medium — a URL in
+    #: WhatsApp is a tappable card rather than a suspicious string in an SMS
+    #: from an unknown number.
+    #:
+    #: When set, messages go over WhatsApp and `twilio_from_number` is unused.
+    twilio_whatsapp_from: str | None = None
+
     #: Google Maps, for turning a property address into a point. Absent means a
     #: visit is recorded as un-checkable rather than as verified.
     google_maps_api_key: str | None = None

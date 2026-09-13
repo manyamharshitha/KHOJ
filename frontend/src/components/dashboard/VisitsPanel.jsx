@@ -21,6 +21,36 @@ import { useVisits } from '../../lib/usePlatform';
 import { Badge, Card, Kicker, PanelHead, Sub, Title } from './dashboardUI';
 import Button from '../ui/Button';
 
+const Said = styled.div`
+  margin-top: 0.7rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  background: ${({ theme }) => theme.surface2};
+  border-left: 2px solid
+    ${({ theme, $tone }) =>
+      $tone === 'good' ? theme.gold : $tone === 'bad' ? theme.danger ?? '#b3261e' : theme.rule2};
+  color: ${({ theme }) => theme.ink};
+`;
+
+const LinkRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+
+  code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    color: ${({ theme }) => theme.muted};
+    /* A verification link is long. Let it wrap rather than push the card wide. */
+    word-break: break-all;
+    min-width: 0;
+  }
+`;
+
 const Visit = styled.div`
   padding: 1rem 0;
 
@@ -101,12 +131,54 @@ const stamp = (iso) => {
 const VisitsPanel = () => {
   const { items, loading, error, reload } = useVisits();
   const [busy, setBusy] = useState(null);
+  //: Per-visit outcome of the last action: `{ tone, text, link }`.
+  const [said, setSaid] = useState({});
 
+  /**
+   * Run an action and say what happened — including when nothing did.
+   *
+   * This used to be `await fn(); await reload();`, discarding the result. The
+   * send endpoint answers honestly with `{sent: false, reason}` when SMS is not
+   * configured, and because that is a successful HTTP response rather than an
+   * error, nothing rejected: the button stopped spinning, the status stayed
+   * "scheduled", and the broker was never texted. It looked like it had worked.
+   *
+   * A request that did not go out is reported with the link, because the link
+   * is the useful half — she can send it herself over WhatsApp and the
+   * verification still happens.
+   */
   const act = async (id, fn) => {
     setBusy(id);
+    setSaid((prev) => ({ ...prev, [id]: null }));
     try {
-      await fn();
+      const result = await fn();
+
+      if (result && result.sent === false) {
+        setSaid((prev) => ({
+          ...prev,
+          [id]: {
+            tone: 'warn',
+            // Short, because the useful thing is the button underneath it. The
+            // gateway's own explanation — a trial account, an unverified
+            // number — is true and not the customer's problem to read.
+            text: 'Khoj could not send it automatically. Send it yourself:',
+            link: result.link || null,
+            whatsapp: result.whatsapp_url || null,
+          },
+        }));
+      } else if (result && result.sent === true) {
+        setSaid((prev) => ({
+          ...prev,
+          [id]: { tone: 'good', text: 'Request sent to the broker.', link: null },
+        }));
+      }
+
       await reload();
+    } catch (err) {
+      setSaid((prev) => ({
+        ...prev,
+        [id]: { tone: 'bad', text: err?.message || 'That did not work.', link: null },
+      }));
     } finally {
       setBusy(null);
     }
@@ -199,6 +271,46 @@ const VisitsPanel = () => {
                     </Button>
                   )}
                 </div>
+
+                {/* The result of the last action on this visit, including the
+                    case where nothing happened. A link that could not be texted
+                    is still a link she can send herself, so it is offered rather
+                    than swallowed with the failure. */}
+                {said[v.id] && (
+                  <Said $tone={said[v.id].tone}>
+                    <span>{said[v.id].text}</span>
+                    {said[v.id].link && (
+                      <LinkRow>
+                        {/* The primary way out when the gateway refuses. Opens
+                            her own WhatsApp with the broker's number and the
+                            message filled in — one tap, any number, no account,
+                            and the broker sees a message from a person rather
+                            than a link from a shortcode they do not recognise. */}
+                        {said[v.id].whatsapp && (
+                          <Button
+                            size="sm"
+                            arrow={false}
+                            as="a"
+                            href={said[v.id].whatsapp}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Send on WhatsApp
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          arrow={false}
+                          onClick={() => navigator.clipboard?.writeText(said[v.id].link)}
+                        >
+                          Copy link
+                        </Button>
+                        <code>{said[v.id].link}</code>
+                      </LinkRow>
+                    )}
+                  </Said>
+                )}
               </Visit>
             );
           })}

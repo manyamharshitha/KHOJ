@@ -678,12 +678,26 @@ class SessionResults(Base):
     """``GET /api/session/{id}/results`` body."""
 
     session: SearchSession
+    #: Properties that met every limit she set.
     results: list[ListingResult]
     tier: str = "free"
     listings_limit: int = 2
     #: Ranked but beyond the plan's ceiling, so the customer can see what an
     #: upgrade would buy rather than wondering what was hidden.
     beyond_plan: int = 0
+
+    #: Found, but outside a limit she stated — over budget, wrong bedroom count.
+    #:
+    #: Returned separately rather than mixed into `results`, which is where they
+    #: used to go. The pipeline stores rejects deliberately so it can say why
+    #: each was dropped, and this endpoint handed the whole collection back: a
+    #: customer who asked for nothing over Rs 30,000 was shown Rs 42,000 flats,
+    #: each carrying an "Excluded:" reason the screen never displayed. Her stated
+    #: ceiling is the one number she is entitled to have respected.
+    #:
+    #: Kept in the payload because "nine more, just over your budget" is worth
+    #: offering — as a choice she makes, not as a result she has to sift.
+    excluded: list[ListingResult] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------

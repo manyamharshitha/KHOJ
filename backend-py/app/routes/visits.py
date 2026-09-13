@@ -31,7 +31,7 @@ from pydantic import Field
 from app.config import settings
 from app.core.auth import OptionalUser, require_user
 from app.core.geo import geocode, geocoding_available, haversine_m
-from app.core.sms import send_sms, sms_available
+from app.core.sms import send_sms, sms_available, whatsapp_handoff_url
 from app.llm.extractor import to_e164
 from app.models import (
     Base,
@@ -179,17 +179,29 @@ async def send_request(visit_id: str, user: OptionalUser) -> dict[str, object]:
     token = await token_for_visit(visit_id) or await issue_visit_token(visit_id)
     link = f"{settings.public_base_url.rstrip('/')}/verify/{token}"
     address = visit.property_address or "the property"
-    result = await send_sms(
-        visit.broker_phone,
+    # Built once and used twice — sent by the gateway if there is one, and
+    # handed to the customer's own WhatsApp if there is not. Two wordings would
+    # drift, and the broker should read the same thing either way.
+    message = (
         f"Khoj: a prospective tenant has asked for a short live video from {address}. "
-        f"Please open this link and record 2 minutes now: {link}",
+        f"Please open this link and record 2 minutes now: {link}"
     )
+    result = await send_sms(visit.broker_phone, message)
 
     if result.sent:
         await update_site_visit(
             visit_id, status=SiteVisitStatus.SMS_SENT.value, sms_sent_at=utcnow()
         )
-    return {"sent": result.sent, "reason": result.reason, "link": link}
+    # Always returned, sent or not. When the gateway refuses — a trial account,
+    # an unverified number, no DLT registration — this is the way the link still
+    # reaches the broker: the customer taps it, her own WhatsApp opens with the
+    # message ready, and she presses send. One tap instead of an upgrade.
+    return {
+        "sent": result.sent,
+        "reason": result.reason,
+        "link": link,
+        "whatsapp_url": whatsapp_handoff_url(visit.broker_phone, message),
+    }
 
 
 def decide_outcome(

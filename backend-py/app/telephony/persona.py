@@ -57,7 +57,73 @@ def _money(value: int | None) -> str:
     return f"Rs {value:,}" if value is not None else "not stated"
 
 
-def build_task(listing: Listing, criteria: SearchCriteria, criteria_text: str) -> str:
+def _video_verification_section(can_text: bool) -> str:
+    """The ask that starts a Khoj Verified badge.
+
+    Everything downstream of this question was built first — the LiveKit room,
+    the GPS check, the broker's capture page, the webhook that writes
+    "verified" — and nothing ever asked it. The call talked about coming to see
+    the flat and hung up, so no verification could ever begin.
+
+    ``can_text`` decides whether a text is offered at all. With no SMS provider
+    configured the link cannot be sent, and an agent that promises one leaves
+    somebody waiting for a message that will never arrive. Better to take the
+    time and have a person follow up than to be politely dishonest on the phone.
+    """
+    if not can_text:
+        return """\
+
+## Before you finish: when will they next be at the property
+
+Ask this every time, near the end, once the money questions are answered.
+
+Ask when they will next be at the flat in person — a day and a rough time is
+enough. Note whatever they say.
+
+Say the tenant would like a short video from inside, and ask whether they would
+be willing to do one when they are next there. **Do not promise to send them
+anything, and do not offer to text a link** — say only that someone from Khoj
+will get in touch to arrange it. If they say no, accept it immediately and move
+on; it is a favour, not a requirement.
+"""
+
+    return """\
+
+## Before you finish: the live video
+
+Ask this every time, near the end, once the money questions are answered.
+
+1. Ask when they will next be at the flat in person. A day and a rough time is
+   enough.
+2. If they are **there right now**, say the tenant would love a quick look, and
+   that you can text them a link that opens the camera — about two minutes,
+   nothing to install. Ask whether that is alright.
+3. If they are **not there now**, ask whether they would be willing to do it
+   when they next are, and confirm the time they gave.
+
+Explain what it is for, plainly: the tenant is trying to avoid wasted trips
+across the city to flats that turn out not to exist or not to match the advert.
+A short video from the property saves her that.
+
+Two things to be clear about, because they are somebody's privacy:
+
+- The video is of the **property**, not of them. They do not need to be on
+  camera.
+- Their **location is recorded** with it, to confirm the video came from the
+  address. Say so before they agree, not after.
+
+If they say no, accept it immediately and move on. It is a favour, and a
+listing without a video is still a listing.
+"""
+
+
+def build_task(
+    listing: Listing,
+    criteria: SearchCriteria,
+    criteria_text: str,
+    *,
+    can_text: bool | None = None,
+) -> str:
     """The natural-language task CALL-E runs for one call.
 
     Everything the agent needs to hold a real conversation about *this* flat:
@@ -96,6 +162,13 @@ def build_task(listing: Listing, criteria: SearchCriteria, criteria_text: str) -
 
     must_haves = "\n".join(f"- {m}" for m in criteria.must_haves) or "- (none stated)"
     extra_questions = "\n".join(f"- {q}" for q in criteria.custom_questions)
+
+    # Asked at build time rather than baked in, so turning SMS on changes what
+    # the agent offers without anyone remembering to edit a script.
+    if can_text is None:
+        from app.core.sms import sms_available
+
+        can_text = sms_available()
 
     return f"""\
 You are placing a short outbound phone call to the person who advertised a rental
@@ -189,6 +262,7 @@ brokerage, lock-in. Those five decide whether the flat is affordable at all.
   the extra minute; if they are not, leave early with the money questions
   answered.
 
+{_video_verification_section(can_text)}
 When you have what you need, close with something like: "{CLOSE}"
 """
 

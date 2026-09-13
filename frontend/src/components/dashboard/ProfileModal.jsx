@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import styled from 'styled-components';
 import { TextInput } from './dashboardUI';
 import Button from '../ui/Button';
+import { initials, useAvatarImage } from './avatar';
 
 const Overlay = styled.div`
   position: fixed;
@@ -131,15 +132,6 @@ const Field = styled.div`
   }
 `;
 
-const initials = (name) =>
-  name
-    .trim()
-    .split(/\s+/)
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase() || 'K';
-
 const CloseIcon = () => (
   <svg viewBox="0 0 24 24" fill="none">
     <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -148,6 +140,7 @@ const CloseIcon = () => (
 
 const ProfileModal = ({ profile, onChange, onClose }) => {
   const fileRef = useRef(null);
+  const { usable: hasPhoto, imgProps } = useAvatarImage(profile.avatar);
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
@@ -170,17 +163,20 @@ const ProfileModal = ({ profile, onChange, onClose }) => {
         <AvatarRow>
           <AvatarPreview
             type="button"
-            $hasImage={!!profile.avatar}
+            $hasImage={hasPhoto}
             onClick={() => fileRef.current?.click()}
             aria-label="Change photo"
           >
-            {profile.avatar ? <img src={profile.avatar} alt="" /> : initials(profile.name)}
+            {hasPhoto ? <img {...imgProps} /> : initials(profile.name)}
           </AvatarPreview>
           <AvatarActions>
             <UploadLink type="button" onClick={() => fileRef.current?.click()}>
               Upload photo
             </UploadLink>
-            {profile.avatar && (
+            {/* "Remove" is offered for a photo that is actually showing. A
+                remote one that failed to load is already invisible, and a
+                button to remove nothing is just confusing. */}
+            {hasPhoto && (
               <RemoveLink type="button" onClick={() => onChange({ ...profile, avatar: null })}>
                 Remove photo
               </RemoveLink>

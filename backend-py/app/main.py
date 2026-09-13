@@ -315,6 +315,7 @@ async def health() -> dict[str, object]:
     Surfaced so nobody demos the mock dialer believing it is placing real calls.
     """
     from app.core.db import ping
+    from app.core.sms import sms_available
     from app.llm.client import llm_available
 
     return {
@@ -329,6 +330,19 @@ async def health() -> dict[str, object]:
         "llm_configured": llm_available(),
         "extraction_model": settings.extraction_model,
         "calle_configured": bool(settings.calle_api_key),
+        # Live video and the message that carries its link. Both live entirely
+        # in environment variables, both fail quietly when unset — a broker is
+        # simply never asked — and neither was visible from outside the box.
+        # That made "did the deploy pick up my LiveKit keys?" a question you
+        # could only answer by attempting a real verification and watching it
+        # not happen. Reported here so it is one request instead.
+        #
+        # These are booleans on purpose. A URL is harmless, but a health
+        # endpoint that echoes configuration is one careless line away from
+        # echoing a secret, and the useful answer is yes or no anyway.
+        "livekit_configured": settings.livekit_ready,
+        "livekit_recording": settings.livekit_record,
+        "sms_configured": sms_available(),
         "max_sites": settings.max_sites_per_search,
         "max_concurrent_calls": settings.max_concurrent_calls,
         "call_windows_enforced": not settings.ignore_call_window,
