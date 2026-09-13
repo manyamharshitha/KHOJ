@@ -1,0 +1,108 @@
+{
+  "name": "genuine listing, rent as advertised, no brokerage",
+  "outcome": "completed",
+  "consentRecord": true,
+  "turns": [
+    {
+      "who": "agent",
+      "text": "Hello — I'm an AI assistant calling for a tenant about your listing in Kothrud. This will take under a minute, and I am recording it so she can hear your answers. Is that alright?",
+      "tStartMs": 0,
+      "tEndMs": 8200
+    },
+    {
+      "who": "broker",
+      "text": "Sure, go ahead.",
+      "tStartMs": 8600,
+      "tEndMs": 9700
+    },
+    {
+      "who": "agent",
+      "text": "When can she come and see the flat?",
+      "tStartMs": 10000,
+      "tEndMs": 12200
+    },
+    {
+      "who": "broker",
+      "text": "Saturday or Sunday morning, between ten and one. It is vacant right now.",
+      "tStartMs": 12600,
+      "tEndMs": 17400
+    },
+    {
+      "who": "agent",
+      "text": "What's the rent and the deposit right now?",
+      "tStartMs": 17700,
+      "tEndMs": 20100
+    },
+    {
+      "who": "broker",
+      "text": "Twenty-four thousand rent, two months deposit. Same as what is posted.",
+      "tStartMs": 20500,
+      "tEndMs": 25200
+    },
+    {
+      "who": "agent",
+      "text": "So twenty-four thousand rent and two months deposit — correct?",
+      "tStartMs": 25500,
+      "tEndMs": 28900
+    },
+    {
+      "who": "broker",
+      "text": "Yes, twenty-four thousand, two months.",
+      "tStartMs": 29200,
+      "tEndMs": 31600
+    },
+    {
+      "who": "agent",
+      "text": "Is there a brokerage on top, and how much?",
+      "tStartMs": 31900,
+      "tEndMs": 34300
+    },
+    {
+      "who": "broker",
+      "text": "No brokerage, owner is paying it.",
+      "tStartMs": 34700,
+      "tEndMs": 36900
+    },
+    {
+      "who": "agent",
+      "text": "Is non-veg allowed in the building?",
+      "tStartMs": 37200,
+      "tEndMs": 39400
+    },
+    {
+      "who": "broker",
+      "text": "Yes, allowed, no restriction.",
+      "tStartMs": 39700,
+      "tEndMs": 41500
+    },
+    {
+      "who": "agent",
+      "text": "Does the owner rent to bachelors, or is it family only?",
+      "tStartMs": 41800,
+      "tEndMs": 45000
+    },
+    {
+      "who": "broker",
+      "text": "Anyone is fine, bachelors also. Only no loud parties, that's the condition.",
+      "tStartMs": 45400,
+      "tEndMs": 50100
+    },
+    {
+      "who": "agent",
+      "text": "That's everything, thank you. She'll call you back directly if it fits.",
+      "tStartMs": 50400,
+      "tEndMs": 53900
+    }
+  ],
+  "result": {
+    "available": "yes",
+    "bait_pivot": "unknown",
+    "rent_actual": "24000",
+    "deposit_months": "2",
+    "brokerage_months": "0",
+    "non_veg_allowed": "yes",
+    "tenant_profile": "anyone",
+    "consent_to_record": "yes",
+    "notes": ""
+  }
+}

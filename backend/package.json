@@ -1,0 +1,30 @@
+{
+  "name": "khoj",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch index.ts",
+    "start": "tsx index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'The test suite predates the Firebase/Groq/dynamic-questions rewrite and needs to be rewritten against a Firestore emulator before it can run again.'",
+    "demo": "tsx scripts/demo.ts",
+    "replay": "tsx scripts/replay.ts",
+    "eval": "tsx eval/score.ts",
+    "reset": "echo 'Clear Firestore data from the Firebase console, or delete the collections with the Admin SDK.'"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.1",
+    "fastify": "^5.4.0",
+    "firebase-admin": "^13.0.2",
+    "groq-sdk": "^0.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
