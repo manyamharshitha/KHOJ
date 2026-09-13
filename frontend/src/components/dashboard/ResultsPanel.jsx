@@ -641,11 +641,47 @@ const ResultsPanel = ({ sessionId = null }) => {
         </Card>
       )}
 
+      {/* Three different facts used to share one message, and that is why a
+          working search was indistinguishable from a broken one.
+
+          "You have not searched", "the search ran and found nothing" and "your
+          filter is hiding everything" all rendered as "Nothing here yet. Start
+          a search" — so a search that completed correctly with no matches
+          looked exactly like a search that never happened. There was no way to
+          tell whether the thing worked. */}
       {!searching && !gaveUp && !searchError && !loading && !error && visible.length === 0 && (
         <Card>
           <ResultsEmpty>
-            <SectionLabel>Nothing here yet</SectionLabel>
-            <p>No recent activity. Start a search or add a listing to get started.</p>
+            {runs.length > 0 ? (
+              <>
+                <SectionLabel>Nothing matches this filter</SectionLabel>
+                <p>
+                  {runs.length} {runs.length === 1 ? 'property is' : 'properties are'} in these
+                  results, but none {runs.length === 1 ? 'is' : 'are'}{' '}
+                  <strong>{filter}</strong>.
+                </p>
+                <Button size="sm" arrow={false} onClick={() => setFilter('All')}>
+                  Show all {runs.length}
+                </Button>
+              </>
+            ) : sessionId ? (
+              <>
+                <SectionLabel>That search finished — nothing matched</SectionLabel>
+                <p>
+                  Khoj read the listing sites and found no property that fits what you asked
+                  for. The search itself worked; there was simply nothing to return.
+                </p>
+                <p>
+                  Try a wider budget or a nearby locality, add more sources, or add a listing by
+                  hand if you already have a number.
+                </p>
+              </>
+            ) : (
+              <>
+                <SectionLabel>Nothing here yet</SectionLabel>
+                <p>No recent activity. Start a search or add a listing to get started.</p>
+              </>
+            )}
           </ResultsEmpty>
         </Card>
       )}
