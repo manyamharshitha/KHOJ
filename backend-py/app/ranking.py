@@ -19,6 +19,7 @@ import logging
 from typing import Final
 
 from app.models import Listing, SearchCriteria
+from app.scraping.sites import is_city_level
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,30 @@ def rank_listings(listings: list[Listing]) -> list[Listing]:
     return sorted(listings, key=sort_key)
 
 
+def _in_any_locality(listing: Listing, localities: list[str]) -> bool:
+    """Whether this listing looks like it is in one of the areas asked for.
+
+    Substring, both directions, case-insensitive. "Koramangala 1st Block" has to
+    match "Koramangala", and a search for "Koramangala 5th Block" has to match a
+    listing that just says "Koramangala" — an exact comparison fails both, and
+    failing them means discarding the right flat over a suffix.
+
+    A listing with no locality at all is kept. The unknown is what the phone
+    call is for, and an operator that omits the area on some cards should not
+    cost the customer those properties.
+    """
+    haystack = " ".join(
+        part.lower() for part in (listing.locality, listing.title) if part
+    )
+    if not haystack.strip():
+        return True
+
+    return any(
+        (name := wanted.strip().lower()) and (name in haystack or haystack in name)
+        for wanted in localities
+    )
+
+
 def filter_hard_constraints(
     listings: list[Listing], criteria: SearchCriteria
 ) -> tuple[list[Listing], list[tuple[Listing, str]]]:
@@ -74,6 +99,27 @@ def filter_hard_constraints(
     for listing in listings:
         reason: str | None = None
         total = listing.total_monthly_cost
+
+        # Locality, but only for the sources that could not filter on it.
+        #
+        # NoBroker is asked for `koramangala_bangalore` and answers with
+        # Koramangala flats. Zolo has no locality in its URL to ask with, so it
+        # answers with every PG in the city — and nothing checked, so a
+        # Koramangala search returned BTM Layout and HSR Layout. Worse, the same
+        # city page is served for every search, so the same few PGs appeared
+        # whatever was typed. It read as canned data.
+        #
+        # Not applied to locality-aware portals. Their URL already did this, and
+        # re-checking a free-text address against a free-text locality would
+        # throw away good listings over a spelling — which is the opposite of
+        # the problem being fixed.
+        if (
+            criteria.localities
+            and is_city_level(listing.source_site)
+            and not _in_any_locality(listing, criteria.localities)
+        ):
+            where = listing.locality or "somewhere else in the city"
+            reason = f"{where} is not one of the areas you asked about"
 
         if criteria.max_total_monthly is not None and total is not None:
             if total > criteria.max_total_monthly:

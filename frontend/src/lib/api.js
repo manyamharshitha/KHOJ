@@ -96,8 +96,22 @@ const REQUEST_TIMEOUT_MS = 60_000;
  */
 async function request(
   path,
-  { method = 'GET', body, signal, timeoutMs = REQUEST_TIMEOUT_MS } = {},
+  { method = 'GET', body, signal, timeoutMs = REQUEST_TIMEOUT_MS, quiet = false } = {},
 ) {
+  /**
+   * `quiet` suppresses the console line, not the error.
+   *
+   * For a background poll, one failed request is not news. The instance sleeps
+   * after fifteen minutes of inactivity and takes the better part of a minute
+   * to wake, so the first poll after a quiet spell fails as a matter of course
+   * and the next one succeeds. Logging that as an error trains people to
+   * ignore red text in the console, which is where the failures that do matter
+   * appear.
+   *
+   * The caller still gets the rejection and still backs off; it simply decides
+   * for itself when a run of failures is worth mentioning.
+   */
+  const complain = quiet ? () => {} : console.error;
   // A caller's own signal still wins; this only adds a deadline on top of it.
   const controller = new AbortController();
   const onAbort = () => controller.abort();
@@ -120,7 +134,7 @@ async function request(
     // our own deadline is reported as something a person can act on.
     if (err?.name === 'AbortError' && signal?.aborted) throw err;
     if (err?.name === 'AbortError') {
-      console.error(`[khoj api] ${method} ${BASE}${path} → timed out after ${timeoutMs}ms`);
+      complain(`[khoj api] ${method} ${BASE}${path} → timed out after ${timeoutMs}ms`);
       throw new ApiError(
         `The server did not respond within ${Math.round(timeoutMs / 1000)}s. It may be busy or waking up — try again.`,
         { status: 0, code: 'timeout' },
@@ -131,7 +145,7 @@ async function request(
     // CORS rejection, DNS failure and refused connection are indistinguishable
     // from here. Printing the URL at least says *which* origin was refused,
     // which is usually enough to spot a wrong VITE_API_URL.
-    console.error(`[khoj api] ${method} ${BASE}${path} → network failure`, err);
+    complain(`[khoj api] ${method} ${BASE}${path} → network failure`, err);
     throw new ApiError(
       `Could not reach the server at ${BASE}. It may be starting up, or rate-limiting ` +
         'requests — a 429 is returned by the platform before the application sees it, ' +
@@ -165,7 +179,7 @@ async function request(
     // a 401 from an expired token and a CORS preflight rejection all reach a
     // component as the same red banner, and the difference between them is the
     // whole diagnosis. This is the only place that knows both.
-    console.error(`[khoj api] ${method} ${BASE}${path} → ${response.status}`, payload);
+    complain(`[khoj api] ${method} ${BASE}${path} → ${response.status}`, payload);
     throw new ApiError(message, { status: response.status, code: payload?.code });
   }
   return payload;
@@ -236,6 +250,17 @@ export const getSession = (sessionId) => request(`/api/session/${sessionId}`);
 
 /** GET /api/session/{id}/results — `{ session, results, tier, listings_limit, beyond_plan }`. */
 export const getResults = (sessionId) => request(`/api/session/${sessionId}/results`);
+
+/**
+ * GET /api/calls/history — every call this account has placed, newest first.
+ *
+ * Separate from `getResults` because they answer different questions. Results
+ * is scoped to one search, which is right for the search and wrong for the
+ * person: a call placed last Tuesday belongs to a session she has long since
+ * navigated away from, so her own history was invisible to her.
+ */
+export const getCallHistory = (limit = 50) =>
+  request(`/api/calls/history?limit=${limit}`);
 
 /**
  * POST /api/session/{id}/call-all — start dialling, cheapest first.
@@ -530,7 +555,10 @@ export const getNegotiation = (negotiationId) => request(`/api/negotiations/${ne
 
 /** GET /api/notifications */
 export const getNotifications = ({ unreadOnly = false } = {}) =>
-  request(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`);
+  // Quiet: this runs on a timer whether or not anyone is looking, and it is the
+  // request most likely to be the one that wakes a sleeping instance. Its own
+  // hook counts consecutive failures and says something when they persist.
+  request(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`, { quiet: true });
 
 /** POST /api/notifications/{id}/read */
 export const markNotificationRead = (notificationId) =>

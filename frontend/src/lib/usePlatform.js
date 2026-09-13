@@ -134,6 +134,19 @@ export function useNotifications() {
       // Quiet on purpose. A bell that cannot reach the server should go still,
       // not throw a banner over whatever the customer was doing.
       if (isServerUnwell(err)) failures.current += 1;
+
+      // Said once, on the third consecutive failure, and not before.
+      //
+      // The instance sleeps after fifteen minutes and takes most of a minute to
+      // wake, so the first poll after a quiet spell failing is ordinary and
+      // logging it as an error teaches people to scroll past red text. Three in
+      // a row is roughly a minute of trying, which is no longer a cold start.
+      if (failures.current === 3) {
+        console.warn(
+          '[khoj] notifications have failed three times running — the backend ' +
+            'may be down rather than waking. Polling is backing off.',
+        );
+      }
       setError(err instanceof Error ? err : new Error(String(err)));
     }
   }, []);

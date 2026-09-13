@@ -19,7 +19,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth, isFirebaseConfigured } from '../firebase';
 import { isServerUnwell, nextInterval } from './backoff';
 import * as api from './api';
-import { toDashboard, toQuota, toRunCards } from './adapters';
+import { toDashboard, toQuota, toRunCard, toRunCards } from './adapters';
 
 /** True once Vite has an API URL baked in. */
 export const API_CONFIGURED = Boolean(import.meta.env.VITE_API_URL);
@@ -93,6 +93,49 @@ export function useQuota() {
  *
  * @param {string|null} sessionId  omit to show the demo data
  */
+/**
+ * Every call this account has placed, newest first, across all searches.
+ *
+ * Separate from `useResults` because they answer different questions. Results
+ * is scoped to one session, which is right for a search and wrong for a person:
+ * a call placed last Tuesday belongs to a session she has long since navigated
+ * away from, so her own history was invisible to her — and she had no way to
+ * tell whether the product had ever rung anybody.
+ *
+ * Fetched once on mount rather than polled. History changes when a call
+ * finishes, which the live results are already watching for.
+ */
+export function useCallHistory({ limit = 50 } = {}) {
+  const { ready } = useAuthUser();
+  const [calls, setCalls] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const payload = await api.getCallHistory(limit);
+      const rows = Array.isArray(payload?.calls) ? payload.calls : [];
+      // Only rows whose listing still exists. A call whose property has been
+      // deleted renders as a phone number and a duration, which is a puzzle
+      // rather than a record.
+      setCalls(rows.filter((r) => r?.listing).map(toRunCard));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error(String(err)));
+      setCalls([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [limit]);
+
+  useEffect(() => {
+    if (ready) void load();
+  }, [ready, load]);
+
+  return { calls, loading, error, reload: load };
+}
+
 export function useResults(sessionId, { active = false } = {}) {
   const { ready } = useAuthUser();
   const [runs, setRuns] = useState([]);

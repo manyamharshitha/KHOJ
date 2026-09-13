@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, CardRow, Badge, Switch, IconButton, TextInput } from './dashboardUI';
-import { defaultSources, findKnownSource } from '../../data/listingSources';
+import { searchableSources, findKnownSource } from '../../data/listingSources';
 import { LOCATION_KEY, ONBOARDING_RESULT_KEY } from '../../data/onboardingQuestions';
 import { useSearchSession } from '../../lib/SearchContext';
 import { addManualListing, callAll as callAllApi } from '../../lib/api';
@@ -92,7 +92,7 @@ const answeredClauses = () => {
 const buildPromptFromAnswers = () => answeredClauses().join(' ');
 
 const SourcesPanel = ({ onNavigate }) => {
-  const [sources, setSources] = useState(defaultSources);
+  const [sources, setSources] = useState(searchableSources);
   const [custom, setCustom] = useState([]);
 
   // Custom sources live on the account, not in this component's state, so they
@@ -324,6 +324,13 @@ const SourcesPanel = ({ onNavigate }) => {
       </PanelHead>
 
       <Card>
+        {/* Only the sources Khoj can actually read.
+
+            The blocked ones — 99acres, MagicBricks, Housing, OLX — used to be
+            listed here greyed out with "Blocks Khoj" against them. That is a
+            note-to-self, not a feature: four rows a customer cannot use, on the
+            screen where she chooses where to look. They stay in the data file
+            with the measurement that says why, and off the page. */}
         {sources.map((s) => (
           <CardRow key={s.id}>
             <SourceInfo>
@@ -331,27 +338,18 @@ const SourcesPanel = ({ onNavigate }) => {
               <span>{s.note || s.url}</span>
             </SourceInfo>
             <Right>
-              {/* Two different facts, and the unreachable one comes first.
-                  Whether Khoj can *call* what it finds is worth knowing, but
-                  only once it can read the page at all. */}
+              {/* What this source gives you, said as a gain.
+                  "Listings only" reads as a limitation on a row the customer is
+                  deciding whether to switch on, and it undersells the thing:
+                  browsing is most of the product. Khoj will call where it can,
+                  and where it cannot she still gets the flat, the rent, the
+                  photographs and a link — which is what she came for. */}
               <Badge
                 $tone={
-                  s.reach === 'refused'
-                    ? 'muted'
-                    : s.native
-                      ? 'good'
-                      : s.contactGated
-                        ? 'muted'
-                        : 'accent'
+                  s.native ? 'good' : s.contactGated ? 'muted' : 'accent'
                 }
               >
-                {s.reach === 'refused'
-                  ? 'Blocks Khoj'
-                  : s.native
-                    ? 'On Khoj'
-                    : s.contactGated
-                      ? 'Listings only'
-                      : 'Callable'}
+                {s.native ? 'On Khoj' : s.contactGated ? 'Browse' : 'Browse + call'}
               </Badge>
               <Switch
                 $on={s.enabled}

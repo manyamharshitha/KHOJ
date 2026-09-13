@@ -11,6 +11,7 @@ import pytest
 
 from app.core.plans import (
     CUSTOM_AGENCY_THRESHOLD,
+    LISTINGS_SHOWN_CEILING,
     PLAN_LIMITS,
     Quota,
     Tier,
@@ -78,17 +79,42 @@ class TestQuota:
 
 
 class TestClipping:
-    def test_clips_to_the_tier(self) -> None:
-        rows = [listing(str(i), 10_000 + i) for i in range(10)]
-        kept, dropped = clip_to_plan(rows, Tier.FREE)
-        assert len(kept) == 2
-        assert dropped == 8
+    """Reading is free. Calling is what the plan meters.
 
-    def test_already_consumed_quota_reduces_the_allowance(self) -> None:
-        rows = [listing(str(i), 10_000 + i) for i in range(10)]
-        kept, dropped = clip_to_plan(rows, Tier.SILVER, used=4)
-        assert len(kept) == 2  # 6 limit - 4 used
-        assert dropped == 8
+    These used to assert the opposite — that a free search shows two listings,
+    and none at all once the quota was spent. That was one number doing two
+    jobs, and the job it was written for is verification: each one is a real
+    phone call that costs real money, while showing a listing costs a database
+    read.
+
+    The effect was a search that read four portals, found seventy-four
+    properties, correctly matched thirty-seven, and displayed two — the same
+    two whatever was typed. Khoj looked unable to find anything, when what it
+    could not do was show what it had already found.
+    """
+
+    def test_a_free_search_shows_everything_it_matched(self) -> None:
+        rows = [listing(str(i), 10_000 + i) for i in range(37)]
+        kept, dropped = clip_to_plan(rows, Tier.FREE)
+
+        assert len(kept) == 37, "the free tier must not hide matched properties"
+        assert dropped == 0
+
+    def test_spent_verification_quota_does_not_hide_listings(self) -> None:
+        """Having used your calls does not mean you may no longer look."""
+        rows = [listing(str(i), 10_000 + i) for i in range(20)]
+        kept, dropped = clip_to_plan(rows, Tier.FREE, used=99)
+
+        assert len(kept) == 20
+        assert dropped == 0
+
+    def test_a_very_long_list_is_still_capped_for_the_screen(self) -> None:
+        """Not a plan limit — a page that renders."""
+        rows = [listing(str(i), 10_000 + i) for i in range(LISTINGS_SHOWN_CEILING + 25)]
+        kept, dropped = clip_to_plan(rows, Tier.FREE)
+
+        assert len(kept) == LISTINGS_SHOWN_CEILING
+        assert dropped == 25
 
     def test_nothing_is_clipped_when_it_fits(self) -> None:
         rows = [listing("a", 10_000)]
@@ -100,14 +126,24 @@ class TestClipping:
         Applied to an unsorted list it would throw away the cheapest properties
         — the exact opposite of what the customer is paying for.
         """
-        rows = [listing("dear", 90_000), listing("cheap", 10_000), listing("mid", 40_000)]
-        kept, _ = clip_to_plan(rank_listings(rows), Tier.FREE)
-        assert [x.id for x in kept] == ["cheap", "mid"]
+        rows = [listing(str(i), 100_000 - i) for i in range(LISTINGS_SHOWN_CEILING + 10)]
+        rows.append(listing("cheapest", 5_000))
 
-    def test_an_exhausted_plan_keeps_nothing(self) -> None:
-        rows = [listing(str(i), 10_000) for i in range(5)]
-        kept, dropped = clip_to_plan(rows, Tier.FREE, used=2)
-        assert kept == [] and dropped == 5
+        kept, _ = clip_to_plan(rank_listings(rows), Tier.FREE)
+
+        assert kept[0].id == "cheapest"
+        assert len(kept) == LISTINGS_SHOWN_CEILING
+
+    def test_the_plan_still_meters_verification_calls(self) -> None:
+        """The limit did not disappear; it moved to the thing that costs money.
+
+        If this ever fails, browsing and calling have been conflated again and
+        a free account can place unlimited phone calls.
+        """
+        from app.core.plans import limit_for
+
+        assert limit_for(Tier.FREE) < limit_for(Tier.PREMIUM)
+        assert limit_for(Tier.FREE) < LISTINGS_SHOWN_CEILING
 
 
 class TestAgencyLeadValidation:

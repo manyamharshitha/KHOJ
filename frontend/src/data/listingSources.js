@@ -56,7 +56,7 @@ export const defaultSources = [
     // the list because it is the only source where the number was given to us
     // by the person who holds the property rather than scraped off a page.
     native: true,
-    note: 'Properties added to Khoj by owners and brokers. Always has a working number.',
+    note: 'Listed with us directly by owners and brokers — always a working number.',
   },
   {
     id: 'zolo',
@@ -66,7 +66,7 @@ export const defaultSources = [
     enabled: true,
     readable: true,
     contactGated: false,
-    note: 'Managed co-living operator — one central number on every city page, no login.',
+    note: 'Managed co-living, with a number Khoj can ring for you.',
   },
   {
     id: 'colive',
@@ -76,7 +76,7 @@ export const defaultSources = [
     enabled: true,
     readable: true,
     contactGated: false,
-    note: 'Managed co-living operator — one central number on every city page, no login.',
+    note: 'Managed co-living, with a number Khoj can ring for you.',
   },
   {
     id: 'nobroker',
@@ -87,7 +87,7 @@ export const defaultSources = [
     readable: true,
     reach: 'open',
     contactGated: true,
-    note: 'Listings are readable. Phone numbers sit behind a login, so Khoj cannot call these for you.',
+    note: 'Flats, rents and photos, with a link straight to each listing.',
   },
   {
     id: 'realestateindia',
@@ -98,7 +98,7 @@ export const defaultSources = [
     readable: true,
     reach: 'open',
     contactGated: true,
-    note: 'Listings are readable. Phone numbers sit behind a login, so Khoj cannot call these for you.',
+    note: 'Flats, rents and photos, with a link straight to each listing.',
   },
   {
     id: 'squareyards',
@@ -109,7 +109,7 @@ export const defaultSources = [
     readable: true,
     reach: 'js-only',
     contactGated: true,
-    note: 'Rents and sizes are readable, but each listing’s link is drawn by script, so Khoj can show the property without being able to link straight to it.',
+    note: 'Rents and sizes, across the whole city.',
   },
   {
     id: 'stanzaliving',
@@ -120,7 +120,7 @@ export const defaultSources = [
     readable: true,
     reach: 'open',
     contactGated: true,
-    note: 'Listings are readable. Enquiries go through a callback form rather than a published number.',
+    note: 'Managed PGs and co-living rooms, ready to enquire about.',
   },
 
   // Everything below refused an ordinary request. They stay listed, rather than

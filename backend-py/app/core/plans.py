@@ -93,17 +93,40 @@ def next_tier(tier: Tier) -> Tier:
     return order[min(index + 1, len(order) - 1)]
 
 
+#: How many matched properties a search will show, whatever the plan.
+#:
+#: Browsing and verifying are different things and used to share one number.
+#: `PLAN_LIMITS` is a *verification* quota — the wording in `Quota.message` says
+#: so — because each verification is a real phone call that costs real money.
+#: Showing a listing costs a database read.
+#:
+#: Conflating them meant a free search that read four portals, found seventy-four
+#: properties and correctly matched thirty-seven displayed **two** of them, and
+#: the same two whatever the customer typed. Khoj looked like it could not find
+#: anything, when what it could not do was show what it had already found.
+#:
+#: So the plan still governs how many she may have *called*. It no longer
+#: governs how many she may *see*.
+LISTINGS_SHOWN_CEILING = 100
+
+
 def clip_to_plan(items: list, tier: str | Tier, used: int = 0) -> tuple[list, int]:
-    """Cut a ranked list down to what the plan will actually verify.
+    """Cut a ranked list down to what is worth putting on one screen.
 
     Returns ``(kept, dropped_count)``. Applied *after* ranking, never before —
-    clipping an unsorted list would discard the cheapest properties, which is the
-    exact opposite of what the customer is paying for.
+    clipping an unsorted list would discard the cheapest properties, which is
+    the exact opposite of what the customer is paying for.
+
+    ``tier`` and ``used`` are accepted and deliberately ignored. They are kept
+    so every caller does not have to change, and so the next person to wonder
+    whether the plan belongs here finds this note instead of re-adding it: the
+    plan limits verification calls, which cost money. It does not limit reading.
     """
-    allowance = max(0, limit_for(tier) - max(0, used))
-    if len(items) <= allowance:
+    del tier, used  # see LISTINGS_SHOWN_CEILING
+
+    if len(items) <= LISTINGS_SHOWN_CEILING:
         return items, 0
-    return items[:allowance], len(items) - allowance
+    return items[:LISTINGS_SHOWN_CEILING], len(items) - LISTINGS_SHOWN_CEILING
 
 
 def plan_catalogue() -> list[dict[str, object]]:

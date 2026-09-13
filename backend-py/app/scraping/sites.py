@@ -21,6 +21,21 @@ class SiteSpec:
     note: str
     path_slug: bool = False
 
+    #: This portal only has city pages, not locality ones.
+    #:
+    #: Matters because it decides who is responsible for the locality. NoBroker
+    #: is asked for `koramangala_bangalore` and answers with Koramangala flats,
+    #: so its results are already on target. Zolo is asked for `pgs-in-bangalore`
+    #: — there is no locality in the URL to ask with — and answers with every PG
+    #: in the city.
+    #:
+    #: Nothing downstream filtered on locality, so those city-wide results came
+    #: through whole: a Koramangala search returned PGs in BTM Layout and HSR
+    #: Layout, and because the same city page is served for every search, the
+    #: same handful appeared no matter what was typed. It looked like canned
+    #: data. It was a real page, asked the wrong question.
+    city_level: bool = False
+
     def search_url(self, query: str, *, locality: str = "", city: str = "") -> str:
         """The page to fetch for this search.
 
@@ -96,6 +111,21 @@ _PORTAL_CITY_NAMES = {
 def portal_city(value: str) -> str:
     """The city as the portals spell it."""
     return _PORTAL_CITY_NAMES.get(value.strip().lower(), value)
+
+
+def is_city_level(source_name: str | None) -> bool:
+    """Whether results from this source are city-wide rather than local.
+
+    Keyed on the display name because that is what a ``Listing`` carries in
+    ``source_site`` — by the time anything downstream sees it, the SiteSpec is
+    long gone.
+    """
+    if not source_name:
+        return False
+    wanted = source_name.strip().lower()
+    return any(
+        spec.city_level and spec.name.lower() == wanted for spec in SITES.values()
+    )
 
 
 def _slug(value: str) -> str:
@@ -194,6 +224,7 @@ SITES: dict[str, SiteSpec] = {
         search_path="/pgs-in-{q}",
         contact_gated=False,
         note="Managed co-living operator — one central number, shown on every city page, no login.",
+        city_level=True,
         path_slug=True,
     ),
     "colive": SiteSpec(
@@ -203,6 +234,7 @@ SITES: dict[str, SiteSpec] = {
         search_path="/pg-in-{q}",
         contact_gated=False,
         note="Managed co-living operator — one central number, shown on every city page, no login.",
+        city_level=True,
         path_slug=True,
     ),
     "stanzaliving": SiteSpec(
@@ -212,6 +244,7 @@ SITES: dict[str, SiteSpec] = {
         search_path="/pg-hostel-{q}",
         contact_gated=True,
         note="No number on the page — only a 'request a callback' form.",
+        city_level=True,
         path_slug=True,
     ),
 }

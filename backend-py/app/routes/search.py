@@ -18,6 +18,8 @@ from app.models import (
     KHOJ_SOURCE_KEY,
     PASTED_PLACEHOLDER_URL,
     PASTED_SOURCE,
+    CallLog,
+    CallStatus,
     ListingResult,
     SearchCriteria,
     SearchRequest,
@@ -32,6 +34,7 @@ from app.models import (
 from app.pipeline import reserve_calls, run_calls, run_search
 from app.ranking import rank_listings
 from app.repositories import (
+    calls_for_customer,
     calls_for_session,
     count_calls_ever,
     count_calls_since,
@@ -39,6 +42,7 @@ from app.repositories import (
     get_cached_locality,
     get_session,
     list_sessions_for_customer,
+    listings_by_ids,
     listings_for_session,
     new_id,
     reports_for_session,
@@ -462,6 +466,65 @@ async def call_all(
     }
 
 
+def _best_call_per_listing(calls: list[CallLog]) -> dict[str, CallLog]:
+    """One call per listing, choosing the one worth showing.
+
+    A plain ``{c.listing_id: c for c in calls}`` keeps whichever happened to be
+    last out of the cursor, and that became wrong the moment calls started being
+    retried: a listing dialled twice — refused by the carrier, then answered —
+    could show the refusal and hide the conversation. The customer would read
+    "could not be connected" about a property somebody had actually spoken to.
+
+    A completed call outranks everything, because it is the only one with a
+    transcript. Among equals the newest wins.
+    """
+    best: dict[str, CallLog] = {}
+    for call in calls:
+        current = best.get(call.listing_id)
+        if current is None:
+            best[call.listing_id] = call
+            continue
+
+        completed = call.call_status is CallStatus.COMPLETED
+        current_completed = current.call_status is CallStatus.COMPLETED
+        if completed and not current_completed:
+            best[call.listing_id] = call
+        elif completed == current_completed and call.created_at > current.created_at:
+            best[call.listing_id] = call
+    return best
+
+
+@router.get("/calls/history")
+async def call_history(user: OptionalUser = None, limit: int = 50) -> dict[str, object]:
+    """Every call this customer has placed, newest first, with its property.
+
+    Results is scoped to one search, which is right for the search and wrong for
+    the customer: a call placed last Tuesday belongs to a session she has long
+    since navigated away from, so her own history was invisible to her. The
+    listing is joined in because a call without the flat it was about is a
+    phone number and a duration.
+    """
+    account = await require_user(user)
+    calls = await calls_for_customer(account.uid, limit=limit)
+
+    listings = await listings_by_ids([c.listing_id for c in calls])
+
+    return {
+        "calls": [
+            {
+                "call": call.model_dump(mode="json"),
+                "listing": (
+                    listings[call.listing_id].model_dump(mode="json")
+                    if call.listing_id in listings
+                    else None
+                ),
+            }
+            for call in calls
+        ],
+        "total": len(calls),
+    }
+
+
 @router.get("/session/{session_id}/results", response_model=SessionResults)
 async def read_results(session_id: str, user: OptionalUser = None) -> SessionResults:
     """Everything the customer came for.
@@ -478,7 +541,7 @@ async def read_results(session_id: str, user: OptionalUser = None) -> SessionRes
 
     ranked = rank_listings(await listings_for_session(session_id))
     listings, beyond = clip_to_plan(ranked, tier)
-    calls = {c.listing_id: c for c in await calls_for_session(session_id)}
+    calls = _best_call_per_listing(await calls_for_session(session_id))
     reports = {r.listing_id: r for r in await reports_for_session(session_id)}
 
     return SessionResults(

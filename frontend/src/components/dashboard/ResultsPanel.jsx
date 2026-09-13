@@ -4,7 +4,7 @@ import { callAll, streamAboutListing } from '../../lib/api';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, Badge, TextInput } from './dashboardUI';
 import { STATUS_META } from '../../data/callRuns';
-import { useResults } from '../../lib/useKhoj';
+import { useCallHistory, useResults } from '../../lib/useKhoj';
 import { useSearchSession } from '../../lib/SearchContext';
 import Button from '../ui/Button';
 import ConfirmDialog from '../ui/ConfirmDialog';
@@ -63,6 +63,23 @@ const Thumb = styled.img`
 
   @media (max-width: 560px) {
     display: none;
+  }
+`;
+
+const HistoryHead = styled.div`
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 2.2rem 0 0.7rem;
+  padding-top: 1.4rem;
+  /* A rule rather than a heading alone: this is a different question from the
+     one above it, and the eye needs telling. */
+  border-top: 1px solid ${({ theme }) => theme.rule2};
+
+  span {
+    font-size: 0.78rem;
+    color: ${({ theme }) => theme.muted};
   }
 `;
 
@@ -442,6 +459,8 @@ const ResultsPanel = ({ sessionId = null }) => {
     active: reportedBusy,
   });
 
+  const { calls: history } = useCallHistory();
+
   /** Place the call, now that the customer has said yes to this property. */
   const confirmCall = async () => {
     const target = verifying;
@@ -485,6 +504,11 @@ const ResultsPanel = ({ sessionId = null }) => {
     // `undefined - undefined` is NaN, and a NaN comparator scrambles the order
     // silently instead of throwing.
     .sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
+
+  // Past calls, minus anything already on screen from this search. The same
+  // property listed twice under two headings is clutter, not history.
+  const shownIds = new Set(runs.map((r) => r.id));
+  const pastCalls = history.filter((r) => !shownIds.has(r.id));
 
   const append = (runId, message) =>
     setThreads((prev) => ({ ...prev, [runId]: [...(prev[runId] || []), message] }));
@@ -878,6 +902,58 @@ const ResultsPanel = ({ sessionId = null }) => {
           </RunCard>
         );
       })}
+
+      {/* Everything Khoj has ever rung for this account, under the current
+          search rather than replacing it.
+
+          Results is scoped to one session, which is right for a search and
+          wrong for a person: a call placed last Tuesday belongs to a session
+          she has long since navigated away from, so her own history was
+          invisible and there was no way to tell the product had ever rung
+          anybody. Listings already on screen are left out — the same property
+          twice is clutter, not history. */}
+      {pastCalls.length > 0 && (
+        <>
+          <HistoryHead>
+            <SectionLabel>Your past calls</SectionLabel>
+            <span>
+              {pastCalls.length} {pastCalls.length === 1 ? 'call' : 'calls'} from earlier searches
+            </span>
+          </HistoryHead>
+
+          {pastCalls.map((run) => {
+            const meta = STATUS_META[run.status] ?? STATUS_META.pending;
+            return (
+              <RunCard key={`past-${run.id}`}>
+                <RunHead as="div" style={{ cursor: 'default' }}>
+                  {run.photo && (
+                    <Thumb
+                      src={run.photo}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        e.currentTarget.hidden = true;
+                      }}
+                    />
+                  )}
+                  <RunInfo>
+                    <strong>{run.address}</strong>
+                    <span>
+                      {run.source}
+                      {run.date ? ` · ${formatDate(run.date)}` : ''}
+                    </span>
+                  </RunInfo>
+                  <RunMeta>
+                    {run.broker?.phone && <span className="score">{run.broker.phone}</span>}
+                    <Badge $tone={meta.tone}>{meta.label}</Badge>
+                  </RunMeta>
+                </RunHead>
+              </RunCard>
+            );
+          })}
+        </>
+      )}
 
       {/* Named, priced and sourced. Asking "call this one?" is answerable here
           in a way it never was on the Sources panel, where the question arrived
