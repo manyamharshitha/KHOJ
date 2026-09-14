@@ -208,7 +208,7 @@ python -m pytest -q -m live    # needs LiveKit keys, the database, and the backe
 **Team Khoj**
 
 - **Ishika Dumeer**
-- **Harshitha**
+- **Manyam Harshitha**
 
 <div align="center">
 
