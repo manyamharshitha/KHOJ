@@ -278,7 +278,13 @@ const VerifyVisit = () => {
       room = new Room({ adaptiveStream: true, dynacast: true });
       roomRef.current = room;
       await room.connect(joined.url, joined.token);
-      await room.localParticipant.enableCameraAndMicrophone();
+      // The rear camera, as the recorded fallback below already asks for: this
+      // is a video of the property, not of the broker's face.
+      // `enableCameraAndMicrophone()` takes no options and opened the front
+      // camera on every phone. A plain facingMode is a preference, so a laptop
+      // with one camera still uses that one.
+      await room.localParticipant.setCameraEnabled(true, { facingMode: 'environment' });
+      await room.localParticipant.setMicrophoneEnabled(true);
 
       // Show the broker their own camera, so they can see what is being sent.
       const track = [...room.localParticipant.videoTrackPublications.values()][0]?.videoTrack;
