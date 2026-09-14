@@ -67,7 +67,7 @@ router = APIRouter(prefix="/api/visits", tags=["visits"])
 
 #: What a browser is allowed to upload. MediaRecorder emits webm on Chrome and
 #: mp4 on Safari; anything else is not a phone recording a video.
-_ALLOWED_TYPES = {"video/webm", "video/mp4", "video/quicktime"}
+_ALLOWED_TYPES = {"video/webm", "video/mp4", "video/quicktime", "video/x-matroska"}
 
 #: Magic bytes, checked because Content-Type is whatever the client claims.
 #: WebM is EBML (1A 45 DF A3); MP4/QuickTime carry 'ftyp' at offset 4.
@@ -92,7 +92,7 @@ def _looks_like_video(head: bytes) -> bool:
 
 
 @router.post("/schedule")
-async def schedule(body: ScheduleRequest, user: OptionalUser) -> dict[str, object]:
+async def schedule(body: ScheduleRequest, user: OptionalUser, request: Request) -> dict[str, object]:
     """Book a time and prepare the request. Sends nothing yet."""
     from datetime import datetime
 
@@ -148,7 +148,7 @@ async def schedule(body: ScheduleRequest, user: OptionalUser) -> dict[str, objec
 
     return {
         "visit": visit.model_dump(mode="json"),
-        "upload_url": f"{settings.public_base_url.rstrip('/')}/verify/{token}",
+        "upload_url": f"{settings.app_url(request.headers.get('origin'))}/verify/{token}",
         "sms_configured": sms_available(),
         "geocoded": point is not None,
         "note": None
@@ -163,7 +163,7 @@ async def schedule(body: ScheduleRequest, user: OptionalUser) -> dict[str, objec
 
 
 @router.post("/{visit_id}/send")
-async def send_request(visit_id: str, user: OptionalUser) -> dict[str, object]:
+async def send_request(visit_id: str, user: OptionalUser, request: Request) -> dict[str, object]:
     """Text the broker the upload link.
 
     Separate from scheduling so the message goes out at the agreed time rather
@@ -177,7 +177,9 @@ async def send_request(visit_id: str, user: OptionalUser) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="No such verification.")
 
     token = await token_for_visit(visit_id) or await issue_visit_token(visit_id)
-    link = f"{settings.public_base_url.rstrip('/')}/verify/{token}"
+    # The web app's real address, never the localhost default. The broker opens
+    # this on a phone.
+    link = f"{settings.app_url(request.headers.get('origin'))}/verify/{token}"
     address = visit.property_address or "the property"
     # Built once and used twice — sent by the gateway if there is one, and
     # handed to the customer's own WhatsApp if there is not. Two wordings would
@@ -199,6 +201,9 @@ async def send_request(visit_id: str, user: OptionalUser) -> dict[str, object]:
     return {
         "sent": result.sent,
         "reason": result.reason,
+        # Lets the page tell "no text-message service here, send it on WhatsApp"
+        # (the normal case on this deployment) from "a service exists and refused".
+        "sms_configured": sms_available(),
         "link": link,
         "whatsapp_url": whatsapp_handoff_url(visit.broker_phone, message),
     }
@@ -278,7 +283,13 @@ async def upload(
     if visit.status in (SiteVisitStatus.VERIFIED, SiteVisitStatus.VIDEO_RECEIVED):
         raise HTTPException(status_code=409, detail="A video has already been received.")
 
-    if video.content_type not in _ALLOWED_TYPES:
+    # The type as a browser really sends it. Chrome's MediaRecorder labels its
+    # recording "video/webm;codecs=vp8,opus" (or Matroska with H.264), so an
+    # exact match against "video/webm" refused every recording Chrome made — the
+    # broker filmed for two minutes and was told "Only a video recording can be
+    # uploaded." The codec parameters are dropped; the bytes are checked below.
+    media_type = (video.content_type or "").split(";", 1)[0].strip().lower()
+    if media_type not in _ALLOWED_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="Only a video recording can be uploaded.",

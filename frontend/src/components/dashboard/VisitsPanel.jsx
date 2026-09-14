@@ -154,14 +154,19 @@ const VisitsPanel = () => {
       const result = await fn();
 
       if (result && result.sent === false) {
+        // No text-message service on the server is the normal case here, not a
+        // failure: WhatsApp is how the link goes out, so it is offered as the way
+        // to send rather than as an apology. A service that exists and refused —
+        // a trial account, an unverified number — is still said plainly, and
+        // its own explanation is not the customer's problem to read.
+        const handoff = result.sms_configured === false;
         setSaid((prev) => ({
           ...prev,
           [id]: {
-            tone: 'warn',
-            // Short, because the useful thing is the button underneath it. The
-            // gateway's own explanation — a trial account, an unverified
-            // number — is true and not the customer's problem to read.
-            text: 'Khoj could not send it automatically. Send it yourself:',
+            tone: handoff ? 'good' : 'warn',
+            text: handoff
+              ? 'Your request is ready. Send it to the broker on WhatsApp:'
+              : 'Khoj could not send it automatically. Send it yourself:',
             link: result.link || null,
             whatsapp: result.whatsapp_url || null,
           },

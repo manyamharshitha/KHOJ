@@ -461,13 +461,22 @@ const inFiveMinutes = () => {
 const asUtc = (value) =>
   typeof value === 'string' && !/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(value) ? `${value}Z` : value;
 
-/** A past search, named by where it looked rather than by the questionnaire text. */
+/**
+ * A past search, named by where it looked.
+ *
+ * Never by its prompt. A listing added by hand stores the setup answers there
+ * ("Food preference? Veg. Are you renting…") or the broker's phone number, so a
+ * row labelled by prompt showed four identical entries and, on older ones, a
+ * phone number.
+ */
 const searchLabel = (s) => {
+  if (s?.manual) return 'Added by hand';
   const places = [...(Array.isArray(s?.localities) ? s.localities : []), s?.city].filter(Boolean);
-  if (places.length) return places.join(', ');
-  const prompt = typeof s?.prompt === 'string' ? s.prompt.trim() : '';
-  return prompt ? `${prompt.slice(0, 40)}${prompt.length > 40 ? '…' : ''}` : 'Search';
+  return places.length ? places.join(', ') : 'Search';
 };
+
+/** How many past searches the row shows. */
+const RECENT_SHOWN = 10;
 
 const filters = ['All','Completed', 'Scheduled', 'No answer', 'Failed', 'Dead'];
 const statusFor = {
@@ -730,7 +739,14 @@ const ResultsPanel = ({ sessionId = null, onNavigate }) => {
   const { calls: history } = useCallHistory();
   // Refreshed when the current search changes or finishes, so its entry and
   // its count are current without a reload.
-  const { searches } = useSearchHistory({ refreshKey: `${sessionId}:${reportedBusy}` });
+  const { searches } = useSearchHistory({ limit: 25, refreshKey: `${sessionId}:${reportedBusy}` });
+  // Searches that found something, plus whichever one is on screen. A search
+  // that returned nothing has nothing to reopen, and the newest eight used to
+  // be mostly those and single hand-added listings — the searches with real
+  // results were pushed out of the row entirely.
+  const pastSearches = searches
+    .filter((s) => s.session_id === sessionId || (s.status !== 'failed' && (s.listings_found ?? 0) > 0))
+    .slice(0, RECENT_SHOWN);
 
   /** Place the call, now that the customer has said yes to this property. */
   const confirmCall = async () => {
@@ -916,11 +932,11 @@ const ResultsPanel = ({ sessionId = null, onNavigate }) => {
           so a second search used to make the first one's listings unreachable
           from the screen while they sat saved on the server. Shown only when
           there is somewhere else to go. */}
-      {searches.some((s) => s.session_id !== sessionId) && (
+      {pastSearches.some((s) => s.session_id !== sessionId) && (
         <Recent>
           <SectionLabel style={{ marginTop: 0 }}>Your recent searches</SectionLabel>
           <div className="row">
-            {searches.map((s) => {
+            {pastSearches.map((s) => {
               const current = s.session_id === sessionId;
               const when = formatDate(asUtc(s.created_at));
               return (
@@ -938,7 +954,7 @@ const ResultsPanel = ({ sessionId = null, onNavigate }) => {
                       ? 'Showing now'
                       : s.status === 'failed'
                         ? "Didn't finish"
-                        : `${s.listings_found ?? 0} found`}
+                        : `${s.listings_found ?? 0} ${s.listings_found === 1 ? 'listing' : 'listings'}`}
                     {when ? ` · ${when}` : ''}
                   </span>
                 </RecentItem>

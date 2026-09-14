@@ -7,11 +7,17 @@ that can be configured is discoverable in one file rather than scattered through
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: An address that only exists on the machine the browser runs on.
+_LOCAL_ORIGIN = re.compile(r"^https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?$", re.I)
+#: Vercel deployments — the same pattern CORS allows in app/main.py.
+_VERCEL_ORIGIN = re.compile(r"^https://[a-zA-Z0-9-]+\.vercel\.app$")
 
 
 class Settings(BaseSettings):
@@ -468,6 +474,35 @@ class Settings(BaseSettings):
         works whether or not somebody pasted the slash.
         """
         return [o.strip().rstrip("/") for o in self.frontend_origins.split(",") if o.strip()]
+
+    def app_url(self, origin: str | None = None) -> str:
+        """Where the web app lives, for links that leave this server.
+
+        Above all the verification link a broker opens on their phone. It was
+        built from PUBLIC_BASE_URL alone, whose default is http://localhost:5173,
+        so on a server where that was never set every link sent to a broker
+        pointed at localhost and opened nothing.
+
+        In order: PUBLIC_BASE_URL when it is a real address; the origin the
+        request came from, when CORS allows it; the first real https address in
+        FRONTEND_ORIGINS. Localhost only when there is nothing else, which is
+        right on a laptop.
+        """
+        configured = (self.public_base_url or "").strip().rstrip("/")
+        if configured and not _LOCAL_ORIGIN.match(configured):
+            return configured
+
+        caller = (origin or "").strip().rstrip("/")
+        if caller and not _LOCAL_ORIGIN.match(caller) and (
+            caller in self.origins or _VERCEL_ORIGIN.match(caller)
+        ):
+            return caller
+
+        for allowed in self.origins:
+            if allowed.startswith("https://") and not _LOCAL_ORIGIN.match(allowed):
+                return allowed
+
+        return configured or "http://localhost:5173"
 
     @property
     def windows_ist(self) -> list[tuple[int, int]]:

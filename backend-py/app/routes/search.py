@@ -255,6 +255,11 @@ async def list_history(
     ``/api/session/{id}/results`` rather than being fanned out here, so opening
     a history page does not read every transcript ever recorded.
     """
+    # Imported here rather than at the top: the listings routes are a sibling
+    # module, and a module-level import between route files is one refactor
+    # away from a circular import at startup.
+    from app.routes.listings import MANUAL_SOURCE
+
     account = await require_user(user)
     sessions = (
         await list_sessions_for_customer(account.uid, limit=limit)
@@ -272,6 +277,11 @@ async def list_history(
                 # list labelled by it shows every search as the same search.
                 "city": x.criteria.city,
                 "localities": x.criteria.localities,
+                # A listing added by hand is stored as a one-listing "search"
+                # whose prompt is the setup answers or the broker's number.
+                # Flagged so the page can say "Added by hand" instead of
+                # showing either.
+                "manual": any(t.name == MANUAL_SOURCE for t in x.target_sites),
                 "status": x.status.value,
                 "error": x.error,
                 "listings_found": x.listings_found,

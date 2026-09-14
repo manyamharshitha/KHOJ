@@ -49,7 +49,7 @@ POLL_SECONDS = 30.0
 async def _dispatch_one(visit) -> bool:  # type: ignore[no-untyped-def]
     """Send one request. True if the SMS actually left."""
     token = await token_for_visit(visit.id) or await issue_visit_token(visit.id)
-    link = f"{settings.public_base_url.rstrip('/')}/verify/{token}"
+    link = f"{settings.app_url()}/verify/{token}"
     address = visit.property_address or "the property"
 
     result = await send_sms(
