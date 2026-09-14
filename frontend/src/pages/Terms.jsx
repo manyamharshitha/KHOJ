@@ -1,7 +1,7 @@
 import LegalPage from '../components/legal/LegalPage';
 
 const Terms = () => (
-  <LegalPage kicker="Legal" title="Terms of Service" updated="August 29, 2026">
+  <LegalPage kicker="Legal" title="Terms of Service" updated="September 14, 2026">
     <h2>1. Agreement to these terms</h2>
     <p>
       These Terms of Service ("Terms") govern your access to and use of Khoj, including our website, dashboard,
@@ -34,7 +34,7 @@ const Terms = () => (
     <ul>
       <li>Call numbers you don't have a legitimate reason to contact, or numbers on a do-not-call registry.</li>
       <li>Harass, threaten, or mislead the brokers, landlords, or agents Khoj calls.</li>
-      <li>Scrape, resell, or redistribute call transcripts, recordings, or listing data at scale.</li>
+      <li>Scrape, resell, or redistribute call transcripts or listing data at scale.</li>
       <li>Attempt to reverse-engineer, overload, or disrupt the Service.</li>
     </ul>
 
@@ -42,8 +42,8 @@ const Terms = () => (
     <p>
       When you start a call run, you authorize Khoj to place phone calls to the numbers associated with matching
       listings, using the question set and preferences you've configured. Calls are placed within reasonable
-      hours and disclose their AI nature up front. Call recordings and transcripts are made available to you in
-      your dashboard so you can verify what was actually said.
+      hours and disclose their AI nature up front. Each call's full transcript is made available to you in your
+      dashboard so you can read what was actually said.
     </p>
     <p>
       Khoj is built on Call-e's voice-calling infrastructure. Your use of the Service is also subject to any

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -24,6 +25,42 @@ from firebase_admin import credentials, storage
 from app.config import settings
 
 log = logging.getLogger(__name__)
+
+#: Where a host mounts secret files. Render places each Secret File both under
+#: /etc/secrets and in the service's root directory, which is the working
+#: directory the app runs in.
+SECRET_DIRS: tuple[Path, ...] = (Path("/etc/secrets"), Path.cwd())
+
+
+def credentials_path() -> Path | None:
+    """The service-account file to use, or ``None`` when there is none.
+
+    ``FIREBASE_CREDENTIALS_FILE`` is used as given when it names a real file.
+    When it does not, the file is looked for by name wherever the host mounts
+    secrets, and the setting's surrounding quotes and whitespace are ignored.
+
+    That is not defensive padding. The live service had the value copied from a
+    laptop's .env — ``"C:\\Users\\…\\khoj-cd80b-firebase-adminsdk-….json"``,
+    quote marks included — while the same file was mounted as a Secret File.
+    Every sign-in failed on the missing path, and every signed-in customer was
+    silently saved as anonymous, which emptied their history.
+    """
+    raw = (settings.firebase_credentials_file or "").strip().strip("\"'").strip()
+    if not raw:
+        return None
+
+    given = Path(raw)
+    if given.is_file():
+        return given
+
+    # A Windows path does not split on backslashes under Linux, so the file
+    # name is taken by hand rather than with Path(raw).name.
+    name = re.split(r"[\\/]", raw)[-1]
+    for folder in SECRET_DIRS:
+        for candidate in (folder / name, folder / "serviceAccountKey.json"):
+            if candidate.is_file():
+                return candidate
+    return None
 
 
 @lru_cache(maxsize=1)
@@ -43,15 +80,32 @@ def _app() -> firebase_admin.App:
     if settings.firebase_project_id:
         options["projectId"] = settings.firebase_project_id
 
-    cred_path = settings.firebase_credentials_file
-    if cred_path:
-        path = Path(cred_path)
-        if not path.is_file():
-            raise RuntimeError(
-                f"FIREBASE_CREDENTIALS_FILE points at {cred_path!r}, which does not exist."
+    configured = settings.firebase_credentials_file
+    path = credentials_path()
+    if path:
+        if str(path) != (configured or "").strip():
+            log.warning(
+                "firebase: FIREBASE_CREDENTIALS_FILE is %r; using %s, which exists. "
+                "Set it to that path to silence this.",
+                configured,
+                path,
             )
         log.info("firebase: using service account %s", path.name)
         return firebase_admin.initialize_app(credentials.Certificate(str(path)), options)
+
+    if configured:
+        # This used to raise. Raising here did not stop anything bad: it made
+        # every token verification fail, and optional sign-in turned each of
+        # those into an anonymous request. Verifying a token needs only the
+        # project id, so sign-in carries on without the file — minus the
+        # revocation check, which is what the file is actually for.
+        log.error(
+            "firebase: FIREBASE_CREDENTIALS_FILE is %r, and no such file exists there "
+            "or under %s. Sign-in still works against the project id, without a "
+            "revocation check. Point it at the mounted file, e.g. /etc/secrets/<name>.",
+            configured,
+            ", ".join(str(d) for d in SECRET_DIRS),
+        )
 
     log.info("firebase: using application default credentials")
     return firebase_admin.initialize_app(options=options)
@@ -70,8 +124,7 @@ def has_service_credential() -> bool:
     direction: it makes an optional freshness check into a hard prerequisite for
     signing in at all.
     """
-    path = settings.firebase_credentials_file
-    return bool(path) and Path(path).is_file()
+    return credentials_path() is not None
 
 
 

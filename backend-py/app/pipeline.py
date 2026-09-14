@@ -49,6 +49,7 @@ from app.repositories import (
 )
 from app.scraping.capacity import headless_available
 from app.scraping.crawler import crawl
+from app.scraping.html_listings import listings_from_html
 from app.telephony.calle_dialer import CalleDialer, CalleUnavailable, spoken_int
 from app.telephony.mock_dialer import MockDialer
 from app.telephony.persona import build_task
@@ -202,6 +203,13 @@ async def _run_search(session: SearchSession) -> None:
         #: so the customer is told the difference between "the portals had
         #: nothing" and "this server could not open them".
         crawl_skipped: str | None = None
+        #: Why no portal listing reached the results although the portals were
+        #: asked, when that is what happened. Without it a search whose portals
+        #: gave nothing — unreadable, or read but not extracted — ended RANKED
+        #: with no note: only Khoj's own listings on screen, no portal links,
+        #: and nothing to say why the search two minutes earlier had eighty.
+        portals_empty: str | None = None
+        extraction_failures = 0
 
         if session.pasted_content:
             # The customer supplied the text, so there is nothing to fetch. This
@@ -322,12 +330,62 @@ async def _run_search(session: SearchSession) -> None:
             )
 
             for page, result in zip(readable, extracted, strict=True):
-                if isinstance(result, BaseException):
+                failed = isinstance(result, BaseException)
+                if failed:
                     log.exception(
                         "[%s] extraction failed for %s", sid, page.site.name, exc_info=result
                     )
+                if failed or not result:
+                    # The page was fetched and its markup still holds every
+                    # listing's link, rent and photograph. A model that is
+                    # rate-limited or out of quota must not throw those away.
+                    fallback = listings_from_html(
+                        page.html,
+                        base_url=page.final_url or str(page.site.url),
+                        source_site=page.site.name,
+                        session_id=sid,
+                        criteria=session.criteria,
+                        limit=settings.max_listings_per_site,
+                    )
+                    if fallback:
+                        log.info(
+                            "[%s] %s: %d listing(s) read from the page itself (AI extractor %s)",
+                            sid,
+                            page.site.name,
+                            len(fallback),
+                            "failed" if failed else "returned none",
+                        )
+                        listings.extend(fallback)
+                    elif failed:
+                        extraction_failures += 1
                     continue
                 listings.extend(result)
+
+            # Nothing from any portal, for a reason other than memory (which has
+            # its own note below). Said here, where the reason is still known.
+            if not crawl_skipped and not listings:
+                if not readable:
+                    detail = ", ".join(
+                        f"{p.site.name} ({p.status.value})" for p in pages if p.status not in ok
+                    )
+                    portals_empty = (
+                        "None of the listing portals could be read this time"
+                        + (f": {detail}" if detail else "")
+                        + ". Only properties listed directly on Khoj are shown — "
+                        "try the search again in a few minutes."
+                    )
+                elif extraction_failures:
+                    names = ", ".join(p.site.name for p in readable)
+                    portals_empty = (
+                        f"Listings could not be read from {names} this time. Only "
+                        "properties listed directly on Khoj are shown — try the "
+                        "search again in a few minutes."
+                    )
+                else:
+                    portals_empty = (
+                        "The listing portals returned no listings for this search. "
+                        "Only properties listed directly on Khoj are shown."
+                    )
 
         # `or crawl_skipped`: when the portals could not be opened, Khoj's own
         # listings are searched whether or not they were asked for. They are the
@@ -370,6 +428,8 @@ async def _run_search(session: SearchSession) -> None:
                 "were not searched: this server does not have the memory to open "
                 "them. Paste a listing URL, or add a number by hand, to include one."
             )
+        elif portals_empty:
+            note = portals_empty
         elif not callable_count:
             note = (
                 "These listings are shown, but none published a phone number — "

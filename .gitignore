@@ -1,8 +1,10 @@
 .DS_Store
 frontend/node_modules
 frontend/dist
-backend/node_modules
-backend/data
+# The original TypeScript backend, replaced by backend-py. Kept on disk for
+# reference and out of the repository, so nobody reviewing the project reads
+# two backends and wonders which one runs.
+/backend/
 *.local
 *-firebase-adminsdk-*.json
 serviceAccountKey.json
@@ -17,6 +19,17 @@ serviceAccountKey.json
 # These are live credentials, not config: the cookies inside sign you in as
 # yourself until they expire, so a commit hands the account to anyone with repo
 # access. Regenerate rather than share.
+# Demo video footage. The finished video lives on YouTube and the site embeds
+# it by link (VITE_DEMO_VIDEO_URL). Raw recordings are hundreds of megabytes;
+# one commit of them stays in the history of every clone forever, and GitHub
+# rejects any single file over 100 MB outright.
+*.mp4
+*.mov
+*.webm
+*.mkv
+*.avi
+demo-assets/recordings/
+
 magicbricks_auth.json
 *_auth.json
 *auth_state*.json

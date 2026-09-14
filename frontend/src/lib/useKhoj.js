@@ -136,12 +136,50 @@ export function useCallHistory({ limit = 50 } = {}) {
   return { calls, loading, error, reload: load };
 }
 
+/**
+ * This account's recent searches, so an earlier set of results can be reopened.
+ *
+ * Results shows one search — the latest — which is right while a search runs
+ * and wrong the moment a second one finishes: the first search's listings are
+ * still saved, but nothing on screen led back to them, so they read as lost.
+ *
+ * `refreshKey` changes when the current search does, so a search that has just
+ * started or finished is reflected without a reload.
+ */
+export function useSearchHistory({ limit = 8, refreshKey = null } = {}) {
+  const { ready } = useAuthUser();
+  const [searches, setSearches] = useState([]);
+
+  const load = useCallback(async () => {
+    if (!API_CONFIGURED) return;
+    try {
+      const payload = await api.getSearchHistory(limit);
+      const rows = Array.isArray(payload?.sessions) ? payload.sessions : [];
+      setSearches(rows.filter((r) => r && typeof r.session_id === 'string'));
+    } catch {
+      // History sits beside the results; it is not the results. A failure here
+      // leaves the row empty rather than putting an error over what did load.
+      setSearches([]);
+    }
+  }, [limit]);
+
+  useEffect(() => {
+    if (ready) void load();
+  }, [ready, load, refreshKey]);
+
+  return { searches, reload: load };
+}
+
 export function useResults(sessionId, { active = false } = {}) {
   const { ready } = useAuthUser();
   const [runs, setRuns] = useState([]);
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  // The server's own explanation of a finished search that came back short —
+  // no portal listings, or none with a number. It was saved on the session and
+  // dropped here, so the screen showed the short result and never the reason.
+  const [notice, setNotice] = useState(null);
 
   // Consecutive failures, for the backoff below. A ref rather than state: it
   // must not itself trigger a render, and the interval effect reads it when it
@@ -167,6 +205,7 @@ export function useResults(sessionId, { active = false } = {}) {
       setRuns([]);
       setIsLive(false);
       setError(null);
+      setNotice(null);
       return;
     }
     setLoading(true);
@@ -179,6 +218,12 @@ export function useResults(sessionId, { active = false } = {}) {
       // An empty live result is still live — showing samples over the top of it
       // would tell the customer she has results she does not have.
       setRuns(cards);
+      const session = payload?.session;
+      setNotice(
+        session && session.status !== 'failed' && typeof session.error === 'string' && session.error.trim()
+          ? session.error.trim()
+          : null,
+      );
       setIsLive(true);
       setError(null);
       failures.current = 0;
@@ -240,7 +285,7 @@ export function useResults(sessionId, { active = false } = {}) {
     return () => clearTimeout(timer);
   }, [ready, inFlight, active, load, tick]);
 
-  return { runs, isLive, loading, error, reload: load };
+  return { runs, isLive, loading, error, notice, reload: load };
 }
 
 

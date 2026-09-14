@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 
-import { callAll, streamAboutListing } from '../../lib/api';
+import { callAll, scheduleVisit, streamAboutListing } from '../../lib/api';
 import styled from 'styled-components';
 import { PanelHead, Kicker, Title, Sub, Card, Badge, TextInput } from './dashboardUI';
 import { STATUS_META } from '../../data/callRuns';
-import { useCallHistory, useResults } from '../../lib/useKhoj';
+import { useCallHistory, useResults, useSearchHistory } from '../../lib/useKhoj';
 import { useSearchSession } from '../../lib/SearchContext';
 import Button from '../ui/Button';
 import ConfirmDialog from '../ui/ConfirmDialog';
@@ -265,6 +265,143 @@ const Quote = styled.span`
 
 
 
+/**
+ * The call as it was actually said.
+ *
+ * Every answer on a card is extracted from this, and until now none of it was
+ * visible — the product asked the customer to trust a summary of a phone call
+ * she could not read. A native <details>, closed by default: a long call runs
+ * to eighty-odd turns, and the answers above are what most people came for.
+ */
+const TranscriptBox = styled.details`
+  margin-top: 1rem;
+  border: 1px solid ${({ theme }) => theme.rule};
+  border-radius: 10px;
+  background: ${({ theme }) => theme.surface};
+
+  summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    padding: 0.75rem 0.95rem;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: ${({ theme }) => theme.ink};
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary .count {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.64rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: ${({ theme }) => theme.muted};
+  }
+  summary svg {
+    width: 14px;
+    height: 14px;
+    transition: transform 0.2s ease;
+  }
+  &[open] summary {
+    border-bottom: 1px solid ${({ theme }) => theme.rule};
+  }
+  &[open] summary svg {
+    transform: rotate(180deg);
+  }
+`;
+
+const Turns = styled.ol`
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem 0.95rem 0.7rem;
+  /* Scrolls inside itself, so opening an 85-turn call does not push the rest
+     of the results a screen and a half down the page. */
+  max-height: 26rem;
+  overflow-y: auto;
+`;
+
+const Turn = styled.li`
+  display: grid;
+  grid-template-columns: 4.6rem 1fr;
+  gap: 0.8rem;
+  padding: 0.55rem 0;
+
+  & + & {
+    border-top: 1px dashed ${({ theme }) => theme.rule};
+  }
+
+  .who {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding-top: 0.22rem;
+    color: ${({ theme, $agent }) => ($agent ? theme.muted : theme.accent)};
+  }
+  .who time {
+    display: block;
+    margin-top: 0.2rem;
+    letter-spacing: 0;
+    color: ${({ theme }) => theme.muted};
+  }
+  p {
+    margin: 0;
+    font-size: 0.86rem;
+    line-height: 1.55;
+    /* The broker's words are the evidence, so they carry the weight. */
+    color: ${({ theme, $agent }) => ($agent ? theme.ink2 : theme.ink)};
+  }
+
+  @media (max-width: 520px) {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+`;
+
+/** Seconds into the call as m:ss. */
+const clock = (seconds) => {
+  const s = Math.max(0, Math.round(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+const CallTranscript = ({ turns }) => {
+  if (!Array.isArray(turns) || turns.length === 0) return null;
+  // CALL-E sometimes omits offsets, which arrive as 0 for every turn. A column
+  // of identical "0:00" stamps is noise, so times show only when they differ.
+  const timed = turns.some((t) => t.at > 0);
+  return (
+    <TranscriptBox>
+      <summary>
+        <span>Read the full call</span>
+        <span className="count">
+          {turns.length} {turns.length === 1 ? 'turn' : 'turns'}
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      </summary>
+      <Turns>
+        {turns.map((t, i) => (
+          <Turn key={i} $agent={t.who === 'agent'}>
+            <span className="who">
+              {t.who === 'agent' ? 'Khoj AI' : 'Broker'}
+              {timed && t.at != null && <time>{clock(t.at)}</time>}
+            </span>
+            <p>{t.text}</p>
+          </Turn>
+        ))}
+      </Turns>
+    </TranscriptBox>
+  );
+};
+
 const SourceNote = styled.p`
   font-size: 0.8rem;
   color: ${({ theme }) => theme.muted};
@@ -301,7 +438,38 @@ const formatDate = (value) => {
   });
 };
 
-const filters = ['All', 'Completed', 'Scheduled', 'No answer', 'Failed', 'Dead'];
+/**
+ * Five minutes from now, as a `datetime-local` value.
+ *
+ * That input wants local wall-clock time with no zone. `toISOString()` is always
+ * UTC, so used directly it would pre-fill a time five and a half hours out for
+ * anyone in India — shift by the zone offset first.
+ */
+const inFiveMinutes = () => {
+  const at = new Date(Date.now() + 5 * 60_000);
+  at.setSeconds(0, 0);
+  return new Date(at.getTime() - at.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+};
+
+/**
+ * A server timestamp the browser will read correctly.
+ *
+ * The database hands datetimes back without a zone, so "2026-09-14T04:08:56"
+ * arrives meaning UTC and is parsed as local time — a search from 9:38 am in
+ * India listed as 4:08 am. Anything already carrying a zone is left alone.
+ */
+const asUtc = (value) =>
+  typeof value === 'string' && !/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(value) ? `${value}Z` : value;
+
+/** A past search, named by where it looked rather than by the questionnaire text. */
+const searchLabel = (s) => {
+  const places = [...(Array.isArray(s?.localities) ? s.localities : []), s?.city].filter(Boolean);
+  if (places.length) return places.join(', ');
+  const prompt = typeof s?.prompt === 'string' ? s.prompt.trim() : '';
+  return prompt ? `${prompt.slice(0, 40)}${prompt.length > 40 ? '…' : ''}` : 'Search';
+};
+
+const filters = ['All','Completed', 'Scheduled', 'No answer', 'Failed', 'Dead'];
 const statusFor = {
   All: null,
   Completed: 'completed',
@@ -364,6 +532,91 @@ const SEARCH_PROGRESS = {
   calling: 'Calling…',
 };
 
+const WhenField = styled.label`
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+
+  span {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: ${({ theme }) => theme.muted};
+  }
+
+  input {
+    font: inherit;
+    font-size: 0.9rem;
+    padding: 0.55rem 0.7rem;
+    border-radius: 8px;
+    border: 1px solid ${({ theme }) => theme.rule2};
+    background: ${({ theme }) => theme.surface};
+    color: ${({ theme }) => theme.ink};
+    /* The native picker follows this, so it is not a white pop-up in dark mode. */
+    color-scheme: ${({ theme }) => (theme.name === 'dark' ? 'dark' : 'light')};
+  }
+`;
+
+/** Why this result set looks the way it does, in the server's words. */
+const ResultsNote = styled.div`
+  margin: 0 0 1.2rem;
+  padding: 0.8rem 1rem;
+  border-radius: 10px;
+  background: ${({ theme }) => theme.surface};
+  border: 1px solid ${({ theme }) => theme.rule};
+  border-left: 3px solid ${({ theme }) => theme.gold};
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: ${({ theme }) => theme.ink2};
+`;
+
+const Recent = styled.div`
+  margin: 0 0 1.4rem;
+
+  .row {
+    display: flex;
+    gap: 0.6rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+`;
+
+const RecentItem = styled.button`
+  flex: none;
+  min-width: 11rem;
+  max-width: 16rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  text-align: left;
+  font: inherit;
+  cursor: ${({ $current }) => ($current ? 'default' : 'pointer')};
+  border: 1px solid ${({ theme, $current }) => ($current ? theme.ink : theme.rule)};
+  background: ${({ theme }) => theme.surface};
+  color: ${({ theme }) => theme.ink};
+
+  strong {
+    display: block;
+    font-size: 0.84rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  span {
+    display: block;
+    margin-top: 0.2rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.66rem;
+    color: ${({ theme }) => theme.muted};
+  }
+
+  &:hover:not(:disabled) {
+    border-color: ${({ theme }) => theme.ink2};
+  }
+`;
+
 const CallRow = styled.div`
   display: flex;
   align-items: center;
@@ -402,7 +655,7 @@ const ResultsEmpty = styled.div`
   }
 `;
 
-const ResultsPanel = ({ sessionId = null }) => {
+const ResultsPanel = ({ sessionId = null, onNavigate }) => {
   const [filter, setFilter] = useState('All');
   const [openId, setOpenId] = useState(null);
   const [threads, setThreads] = useState({});
@@ -415,11 +668,26 @@ const ResultsPanel = ({ sessionId = null }) => {
   const [verifying, setVerifying] = useState(null);
   const [calling, setCalling] = useState({ id: null, error: null });
 
+  // A live-video verification being booked. Offered only on a completed call:
+  // the call is where a broker hears who Khoj is, so asking a stranger to film a
+  // flat before one has happened is a request with no context at all.
+  //
+  // The API existed and nothing in the dashboard called it, so the Verified tab
+  // said "open one from a listing in Results" about a button that was not there.
+  const [requesting, setRequesting] = useState(null);
+  const [visitWhen, setVisitWhen] = useState('');
+  const [booking, setBooking] = useState({ id: null, busy: false, error: null });
+
   // The search that is running right now, if one is. Read from the shared
   // context rather than a prop, because Sources navigates here the moment the
   // session is created and the crawl continues for some time afterwards — this
   // panel is where that wait is actually shown.
-  const { status: searchStatus, isBusy: reportedBusy, error: searchError } = useSearchSession();
+  const {
+    status: searchStatus,
+    isBusy: reportedBusy,
+    error: searchError,
+    adoptSession,
+  } = useSearchSession();
 
   /**
    * A ceiling on the spinner, independent of what the backend says.
@@ -455,11 +723,14 @@ const ResultsPanel = ({ sessionId = null }) => {
   // Giving up on the spinner is a statement about how long a person should be
   // asked to watch one; it is not a decision to stop collecting results, and
   // listings that arrive late should still appear.
-  const { runs: rawRuns, isLive, loading, error, reload } = useResults(sessionId, {
+  const { runs: rawRuns, isLive, loading, error, notice, reload } = useResults(sessionId, {
     active: reportedBusy,
   });
 
   const { calls: history } = useCallHistory();
+  // Refreshed when the current search changes or finishes, so its entry and
+  // its count are current without a reload.
+  const { searches } = useSearchHistory({ refreshKey: `${sessionId}:${reportedBusy}` });
 
   /** Place the call, now that the customer has said yes to this property. */
   const confirmCall = async () => {
@@ -483,6 +754,41 @@ const ResultsPanel = ({ sessionId = null }) => {
       setCalling({
         id: target.id,
         error: err?.message || 'That call could not be placed.',
+      });
+    }
+  };
+
+  const askForVideo = (run) => {
+    setBooking({ id: null, busy: false, error: null });
+    setVisitWhen(inFiveMinutes());
+    setRequesting(run);
+  };
+
+  /** Book the verification, then hand over to Verified, where it is sent. */
+  const confirmVisit = async () => {
+    const target = requesting;
+    if (!target) return;
+    const at = new Date(visitWhen);
+    if (!visitWhen || Number.isNaN(at.getTime())) {
+      setBooking({ id: target.id, busy: false, error: 'Pick a date and time for the video.' });
+      return;
+    }
+    setBooking({ id: target.id, busy: true, error: null });
+    try {
+      // No broker_phone. The number on the card is masked and not dialable; the
+      // server already holds the real one on the listing it called.
+      await scheduleVisit({ listingId: target.id, scheduledFor: at.toISOString() });
+      setRequesting(null);
+      setBooking({ id: null, busy: false, error: null });
+      // Booked, not sent. Sending — by SMS, or from her own WhatsApp when no
+      // gateway is configured — happens on Verified, with the result shown.
+      onNavigate?.('verified');
+    } catch (err) {
+      setRequesting(null);
+      setBooking({
+        id: target.id,
+        busy: false,
+        error: err?.message || 'That request could not be booked.',
       });
     }
   };
@@ -605,6 +911,44 @@ const ResultsPanel = ({ sessionId = null }) => {
                 ? 'Live results from your search.'
                 : 'No results yet. Run a search to see your own.'}
       </SourceNote>
+
+      {/* Earlier searches, one click back. Results follows the newest search,
+          so a second search used to make the first one's listings unreachable
+          from the screen while they sat saved on the server. Shown only when
+          there is somewhere else to go. */}
+      {searches.some((s) => s.session_id !== sessionId) && (
+        <Recent>
+          <SectionLabel style={{ marginTop: 0 }}>Your recent searches</SectionLabel>
+          <div className="row">
+            {searches.map((s) => {
+              const current = s.session_id === sessionId;
+              const when = formatDate(asUtc(s.created_at));
+              return (
+                <RecentItem
+                  key={s.session_id}
+                  type="button"
+                  $current={current}
+                  disabled={current}
+                  aria-current={current ? 'true' : undefined}
+                  onClick={() => adoptSession(s.session_id)}
+                >
+                  <strong>{searchLabel(s)}</strong>
+                  <span>
+                    {current
+                      ? 'Showing now'
+                      : s.status === 'failed'
+                        ? "Didn't finish"
+                        : `${s.listings_found ?? 0} found`}
+                    {when ? ` · ${when}` : ''}
+                  </span>
+                </RecentItem>
+              );
+            })}
+          </div>
+        </Recent>
+      )}
+
+      {notice && !searching && <ResultsNote role="status">{notice}</ResultsNote>}
 
       <Chips>
         {filters.map((f) => (
@@ -834,6 +1178,18 @@ const ResultsPanel = ({ sessionId = null }) => {
                     <CallError>{calling.error}</CallError>
                   )}
 
+                  {run.status === 'completed' && (
+                    <CallRow>
+                      <Button size="sm" variant="ghost" arrow={false} onClick={() => askForVideo(run)}>
+                        Request live video
+                      </Button>
+                      <span>The broker streams from the property, location on</span>
+                    </CallRow>
+                  )}
+                  {booking.error && booking.id === run.id && !requesting && (
+                    <CallError>{booking.error}</CallError>
+                  )}
+
                   {answers.length > 0 ? (
                     <QA>
                       {answers.map((qa, i) => (
@@ -861,6 +1217,8 @@ const ResultsPanel = ({ sessionId = null }) => {
                       </UnmatchedList>
                     </>
                   )}
+
+                  <CallTranscript turns={run.transcript} />
 
                   {run.broker && (
                     <ContactRow>
@@ -949,6 +1307,24 @@ const ResultsPanel = ({ sessionId = null }) => {
                     <Badge $tone={meta.tone}>{meta.label}</Badge>
                   </RunMeta>
                 </RunHead>
+                {/* A past call has no expandable body, but its conversation is
+                    the one thing still worth opening — a closed <details> costs
+                    one line when nobody wants it. */}
+                {(run.transcript?.length > 0 || run.status === 'completed') && (
+                  <div style={{ padding: '0 1.3rem 1.1rem' }}>
+                    <CallTranscript turns={run.transcript} />
+                    {run.status === 'completed' && (
+                      <CallRow style={{ margin: '0.9rem 0 0' }}>
+                        <Button size="sm" variant="ghost" arrow={false} onClick={() => askForVideo(run)}>
+                          Request live video
+                        </Button>
+                      </CallRow>
+                    )}
+                    {booking.error && booking.id === run.id && !requesting && (
+                      <CallError style={{ margin: '0.8rem 0 0' }}>{booking.error}</CallError>
+                    )}
+                  </div>
+                )}
               </RunCard>
             );
           })}
@@ -975,6 +1351,41 @@ const ResultsPanel = ({ sessionId = null }) => {
         <p style={{ margin: 0 }}>
           This is a <strong>real phone call to a real person</strong> and it uses one of your
           daily verifications. It cannot be undone once it starts.
+        </p>
+      </ConfirmDialog>
+
+      {/* A time, not just a yes. Verified means "filmed near this address at
+          around the time you agreed", so the agreed time is part of what is
+          checked and has to be chosen here. */}
+      <ConfirmDialog
+        open={Boolean(requesting)}
+        title="Ask for a live video?"
+        confirmLabel="Book it"
+        cancelLabel="Not now"
+        busy={booking.busy}
+        busyLabel="Booking…"
+        onConfirm={confirmVisit}
+        onCancel={() => setRequesting(null)}
+      >
+        <p style={{ margin: '0 0 0.9rem' }}>
+          The broker for <strong>{requesting?.address}</strong> gets a link. Opened at the
+          property, it starts a live video with their location on. A stream from near the
+          address at around this time earns the <strong>Khoj Verified</strong> badge.
+        </p>
+        <WhenField>
+          <span>When will they be there?</span>
+          <input
+            type="datetime-local"
+            value={visitWhen}
+            onChange={(e) => setVisitWhen(e.target.value)}
+            disabled={booking.busy}
+          />
+        </WhenField>
+        {booking.error && requesting && (
+          <CallError style={{ margin: '0.8rem 0 0' }}>{booking.error}</CallError>
+        )}
+        <p style={{ margin: '0.9rem 0 0' }}>
+          Nothing is sent yet. You send the link from the <strong>Verified</strong> tab.
         </p>
       </ConfirmDialog>
     </div>

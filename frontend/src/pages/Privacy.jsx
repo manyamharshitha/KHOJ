@@ -1,7 +1,7 @@
 import LegalPage from '../components/legal/LegalPage';
 
 const Privacy = () => (
-  <LegalPage kicker="Legal" title="Privacy Policy" updated="August 29, 2026">
+  <LegalPage kicker="Legal" title="Privacy Policy" updated="September 14, 2026">
     <h2>1. Overview</h2>
     <p>
       This Privacy Policy explains what information Khoj collects, why we collect it, and how it's used and
@@ -23,8 +23,9 @@ const Privacy = () => (
         <strong>Listing sources</strong> — the default sites we check, and any custom sources you add.
       </li>
       <li>
-        <strong>Call data</strong> — recordings and transcripts of calls Khoj places on your behalf, along with
-        any broker contact details collected during those calls.
+        <strong>Call data</strong> — transcripts of calls Khoj places on your behalf and the answers taken from
+        them, along with any broker contact details collected during those calls. Khoj does not store audio
+        recordings of calls.
       </li>
       <li>
         <strong>Usage data</strong> — basic analytics like pages visited and features used, to help us improve
@@ -43,12 +44,12 @@ const Privacy = () => (
     </ul>
     <p>We don't sell your personal information.</p>
 
-    <h2>4. Call recording and transcripts</h2>
+    <h2>4. Call transcripts</h2>
     <p>
-      Every call Khoj places is recorded and transcribed so you can verify exactly what was said, and so we can
-      confirm a call disclosed its AI nature. Recordings and transcripts are tied to your account and visible
-      only to you. Where local law requires it, Khoj's opening disclosure is designed to satisfy call-recording
-      consent requirements for the broker being called.
+      Every call Khoj places is transcribed by our calling provider, so you can read exactly what was said and
+      confirm the call disclosed its AI nature. Khoj keeps the transcript and the answers taken from it, not an
+      audio recording. Transcripts are tied to your account and visible only to you. Where local law requires
+      it, Khoj's opening disclosure is designed to satisfy consent requirements for the broker being called.
     </p>
 
     <h2>5. Third-party services</h2>
@@ -62,7 +63,7 @@ const Privacy = () => (
     <h2>6. Data retention</h2>
     <p>
       We keep your account information and call history for as long as your account is active, so your
-      dashboard stays useful. If you delete your account, we delete your personal data and call recordings
+      dashboard stays useful. If you delete your account, we delete your personal data and call transcripts
       within a reasonable period, except where we're required to retain something for legal reasons.
     </p>
 

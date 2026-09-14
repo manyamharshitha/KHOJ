@@ -22,7 +22,7 @@ const faqs = [
   },
   {
     q: 'can i see the actual conversation?',
-    a: 'Yes — every result links to the transcript and recording behind it, so you can check before deciding.',
+    a: "Yes — every call's full transcript sits on its result, turn by turn, so you can read exactly what the broker said before deciding.",
   },
 ];
 

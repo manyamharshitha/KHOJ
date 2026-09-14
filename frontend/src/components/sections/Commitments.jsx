@@ -25,7 +25,9 @@ const items = [
   {
     n: '05',
     title: 'full transcripts',
-    desc: 'Every answer traces back to its own recording.',
+    // Transcript, not recording: CALL-E returns the words of a call and no
+    // audio, so a promise of recordings was one a judge could check and break.
+    desc: "Every answer traces back to the broker's own words in the call transcript.",
   },
 ];
 

@@ -74,6 +74,9 @@ class PageResult:
     site: TargetSite
     status: ListingSourceStatus
     text: str = ""
+    #: The page's markup, kept so listings can still be read from it when the
+    #: AI extractor fails — see app/scraping/html_listings.py.
+    html: str = ""
     note: str = ""
     final_url: str | None = None
     contact_gated: bool = False
@@ -738,6 +741,7 @@ async def _read_page(browser: "Browser", site: TargetSite) -> PageResult:
         site=site,
         status=ListingSourceStatus.CONTACT_GATED if gated else ListingSourceStatus.OK,
         text=text,
+        html=html,
         final_url=final_url,
         contact_gated=gated,
         authenticated=bool(auth_state),
@@ -915,6 +919,7 @@ async def _read_over_http(
                 else ListingSourceStatus.OK
             ),
             text=page.text,
+            html=page.html,
             final_url=page.url,
             contact_gated=site.contact_gated,
         )

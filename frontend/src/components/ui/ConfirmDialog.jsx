@@ -66,6 +66,9 @@ const ConfirmDialog = ({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   busy = false,
+  // The dialog was written for placing calls, and a booking that reads
+  // "Calling…" while it saves would announce a phone call that is not happening.
+  busyLabel = 'Calling…',
   onConfirm,
   onCancel,
 }) => {
@@ -108,7 +111,7 @@ const ConfirmDialog = ({
             {cancelLabel}
           </Button>
           <Button size="sm" arrow={false} onClick={onConfirm} disabled={busy}>
-            {busy ? 'Calling…' : confirmLabel}
+            {busy ? busyLabel : confirmLabel}
           </Button>
         </Row>
       </Panel>

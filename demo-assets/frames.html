@@ -1,0 +1,502 @@
+<!doctype html>
+<!--
+  Every graphic for the Khoj demo video, one <section> per PNG.
+
+  Rendered by render.py, which screenshots each section at its exact size and
+  refuses to call the result finished if any frame breaks the layout rules:
+  96px safe margin, nothing in the bottom 220px where auto-captions go, no text
+  under 28px, gold text only at 44px and above, and every section card sharing
+  one headline position.
+
+  The section cards follow the walkthrough in order — sign in, sources,
+  properties, the call, the transcript, live video — because a viewer should be
+  able to tell where they are in the product from the card alone.
+
+  Colours are the light and dark themes from frontend/src/theme/themes.js, and
+  the type is the product's own: Fraunces for the wordmark and headlines, IBM
+  Plex Mono for kickers. A frame that looks like a different brand from the
+  recording it sits next to is worse than no frame.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Khoj demo graphics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link
+  href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..600&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=block"
+  rel="stylesheet">
+<style>
+  :root {
+    --bg: #FBFBF9;
+    --bgAlt: #F2F3F0;
+    --surface: #FFFFFF;
+    --ink: #14171A;
+    --ink2: #4A5157;
+    --muted: #8B9299;
+    --rule: #E4E5E1;
+    --rule2: #D2D4CF;
+    --accent: #1B4B73;
+    --gold: #A9812E;
+    --goldSoft: #F6F0E2;
+
+    --serif: 'Fraunces', Georgia, serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --sans: 'Inter', system-ui, sans-serif;
+  }
+
+  html, body { margin: 0; background: transparent; }
+
+  .frame {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    margin-bottom: 40px;
+  }
+  /* Lower-thirds go over video, so the frame itself is see-through. */
+  .frame.clear { background: transparent; }
+  .frame.thumb { width: 1280px; height: 720px; }
+
+  /* ---- shared furniture ------------------------------------------------ */
+
+  .top {
+    position: absolute;
+    left: 96px; right: 96px; top: 96px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--rule);
+  }
+  .mark {
+    font-family: var(--serif);
+    font-variation-settings: 'opsz' 144;
+    font-weight: 400;
+    font-size: 44px;
+    line-height: 1;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .progress { display: flex; gap: 10px; }
+  .progress i { display: block; width: 56px; height: 6px; border-radius: 3px; background: var(--rule2); }
+  .progress i.on { background: var(--ink); }
+
+  /* The edge of the caption band. Everything above it is ours; everything
+     below it belongs to Clipchamp's auto-captions. */
+  .base { position: absolute; left: 96px; right: 96px; top: 858px; border-top: 1px solid var(--rule); }
+
+  .stack { position: absolute; left: 96px; right: 96px; }
+
+  .kicker {
+    height: 40px;
+    display: flex;
+    align-items: center;
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 28px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink2);
+  }
+  .h {
+    margin: 40px 0 0;
+    font-family: var(--serif);
+    font-variation-settings: 'opsz' 144;
+    font-weight: 400;
+    font-size: 112px;
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+  }
+  /* Balanced wrapping on every multi-line block. Left to the default, a line
+     breaks as late as it can, and a headline ends with one word stranded on a
+     line of its own, which on a 1080p frame reads as a mistake. */
+  .h, .caveat { text-wrap: balance; }
+  .sub {
+    text-wrap: balance;
+    margin: 44px 0 0;
+    max-width: 1380px;
+    font-size: 44px;
+    line-height: 1.35;
+    color: var(--ink2);
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 20px;
+    height: 92px;
+    padding: 0 42px 0 20px;
+    border-radius: 999px;
+    background: var(--goldSoft);
+    border: 2px solid var(--gold);
+    font-weight: 600;
+    font-size: 40px;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    box-sizing: border-box;
+  }
+  .badge .tick {
+    display: grid;
+    place-items: center;
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: var(--gold);
+    color: #fff;
+  }
+  .badge .tick svg { width: 34px; height: 34px; }
+
+  /* ---- title and end ---------------------------------------------------- */
+
+  .hero-mark {
+    font-family: var(--serif);
+    font-variation-settings: 'opsz' 144;
+    font-weight: 400;
+    font-size: 240px;
+    line-height: 0.9;
+    letter-spacing: -0.03em;
+  }
+  .hero-h {
+    margin: 72px 0 0;
+    text-wrap: balance;
+    max-width: 1300px;
+    font-family: var(--serif);
+    font-variation-settings: 'opsz' 144;
+    font-weight: 400;
+    font-size: 96px;
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+  }
+  .hero-rule { width: 120px; height: 2px; margin: 56px 0 28px; background: var(--ink); }
+
+  .end-line {
+    margin: 40px 0 0;
+    font-family: var(--serif);
+    font-variation-settings: 'opsz' 144;
+    font-style: italic;
+    font-weight: 300;
+    font-size: 64px;
+    line-height: 1.1;
+    color: var(--ink2);
+  }
+  .end-url { margin: 44px 0 0; font-family: var(--mono); font-size: 32px; color: var(--accent); }
+
+  /* ---- badge meaning ---------------------------------------------------- */
+
+  .rows { margin: 56px 0 0; padding: 0; list-style: none; max-width: 1200px; }
+  .rows li {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    height: 92px;
+    border-top: 1px solid var(--rule);
+    font-size: 48px;
+    letter-spacing: -0.01em;
+  }
+  .rows li:last-child { border-bottom: 1px solid var(--rule); }
+  .rows svg { width: 44px; height: 44px; color: var(--gold); flex: none; }
+  .caveat { margin: 40px 0 0; font-size: 36px; line-height: 1.4; color: var(--ink2); }
+
+  /* ---- split frame ------------------------------------------------------ */
+
+  .zone-label {
+    position: absolute;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 28px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink2);
+  }
+  .zone {
+    position: absolute;
+    top: 170px;
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    background: var(--bgAlt);
+    border: 2px dashed var(--rule2);
+    font-family: var(--mono);
+    font-size: 28px;
+    color: var(--muted);
+  }
+  /* A 1920x1080 recording at 0.625, and a phone at roughly 9:19.5 the same
+     height, so both clips drop in at a clean scale. */
+  .zone.dash { left: 96px; width: 1200px; height: 675px; border-radius: 16px; }
+  .zone.phone { left: 1513px; width: 311px; height: 675px; border-radius: 40px; }
+  .link {
+    position: absolute;
+    left: 1296px; width: 217px;
+    top: 477px; height: 60px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+  }
+  .link-label {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 28px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .link-label i { display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); }
+  .link b { display: block; width: 150px; height: 2px; background: var(--accent); }
+
+  /* ---- lower-thirds ----------------------------------------------------- */
+
+  .lt {
+    position: absolute;
+    left: 96px;
+    top: 760px;
+    height: 76px;
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    padding: 0 34px 0 42px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 18px 48px -24px rgba(17, 19, 21, 0.35);
+    font-weight: 500;
+    font-size: 36px;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .lt::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 8px; background: var(--accent); }
+  .lt .dot { color: var(--muted); margin: 0 16px; }
+
+  /* ---- thumbnails ------------------------------------------------------- */
+
+  .thumb .t-mark {
+    position: absolute; left: 64px; top: 64px;
+    font-family: var(--serif);
+    font-variation-settings: 'opsz' 144;
+    font-size: 48px;
+    line-height: 1;
+    letter-spacing: -0.01em;
+  }
+  .thumb .t-stack { position: absolute; left: 64px; top: 170px; }
+  .thumb .badge { height: 104px; font-size: 46px; padding: 0 46px 0 22px; gap: 22px; }
+  .thumb .badge .tick { width: 62px; height: 62px; }
+  .thumb .badge .tick svg { width: 38px; height: 38px; }
+  .thumb .t-h {
+    margin: 40px 0 0;
+    font-family: var(--serif);
+    font-variation-settings: 'opsz' 144;
+    font-weight: 500;
+    font-size: 128px;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    white-space: nowrap;
+  }
+  .thumb .gold { color: var(--gold); }
+  /* A large faint check, partly off the canvas top-right, away from both the
+     text and the corner where YouTube prints the duration. */
+  .thumb .t-art { position: absolute; right: -60px; top: -60px; width: 360px; height: 360px; color: var(--gold); opacity: 0.14; }
+
+  .thumb.dark {
+    --bg: #0C0F12;
+    --ink: #F1F3F5;
+    --ink2: #B9C0C6;
+    --gold: #D2A855;
+    --goldSoft: rgba(210, 168, 85, 0.14);
+    --rule: #262B30;
+  }
+  .thumb.dark .badge .tick { color: #0C0F12; }
+  .thumb.dark .t-art { opacity: 0.2; }
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="tick" viewBox="0 0 24 24">
+    <path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="tick-ring" viewBox="0 0 100 100">
+    <circle cx="50" cy="50" r="44" fill="none" stroke="currentColor" stroke-width="6"/>
+    <path d="M30 51l13 13 28-29" fill="none" stroke="currentColor" stroke-width="7"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+</svg>
+
+<!-- k01 · title -------------------------------------------------------- -->
+<section class="frame" id="k01-title">
+  <div class="stack" style="top: 190px">
+    <div class="hero-mark">khoj</div>
+    <h1 class="hero-h">Rental listings, checked before you visit.</h1>
+    <div class="hero-rule"></div>
+    <div class="kicker">Search · AI call · Live video</div>
+  </div>
+  <div class="base"></div>
+</section>
+
+<!-- k02 · problem ------------------------------------------------------ -->
+<section class="frame" id="k02-problem">
+  <header class="top"><span class="mark">khoj</span></header>
+  <div class="stack" style="top: 330px">
+    <div class="kicker">The problem</div>
+    <h1 class="h">The listing says available.</h1>
+    <p class="sub">The broker says “come and see.” You lose a Saturday.</p>
+  </div>
+  <div class="base"></div>
+</section>
+
+<!-- k03–k08 · section cards, in walkthrough order. One grid; only the words
+     and the lit progress segment change. ---------------------------------- -->
+<section class="frame section" id="k03-section-signin">
+  <header class="top"><span class="mark">khoj</span><span class="progress"><i class="on"></i><i></i><i></i><i></i><i></i><i></i></span></header>
+  <div class="stack" style="top: 330px">
+    <div class="kicker">01 · Sign in</div>
+    <h1 class="h">Start with Google.</h1>
+    <p class="sub">One tap, and every search and call is saved to your account.</p>
+  </div>
+  <div class="base"></div>
+</section>
+
+<section class="frame section" id="k04-section-sources">
+  <header class="top"><span class="mark">khoj</span><span class="progress"><i></i><i class="on"></i><i></i><i></i><i></i><i></i></span></header>
+  <div class="stack" style="top: 330px">
+    <div class="kicker">02 · Sources</div>
+    <h1 class="h">Choose where Khoj looks.</h1>
+    <p class="sub">NoBroker, RealEstateIndia, Zolo and Colive. Switch each one on or off.</p>
+  </div>
+  <div class="base"></div>
+</section>
+
+<section class="frame section" id="k05-section-properties">
+  <header class="top"><span class="mark">khoj</span><span class="progress"><i></i><i></i><i class="on"></i><i></i><i></i><i></i></span></header>
+  <div class="stack" style="top: 330px">
+    <div class="kicker">03 · Properties</div>
+    <h1 class="h">Every portal, one search.</h1>
+    <p class="sub">Listings with photos and prices, each linked to where it came from.</p>
+  </div>
+  <div class="base"></div>
+</section>
+
+<section class="frame section" id="k06-section-call">
+  <header class="top"><span class="mark">khoj</span><span class="progress"><i></i><i></i><i></i><i class="on"></i><i></i><i></i></span></header>
+  <div class="stack" style="top: 330px">
+    <div class="kicker">04 · The call</div>
+    <h1 class="h">Add a number. Khoj calls.</h1>
+    <p class="sub">An AI asks the broker: still available? The real rent? The deposit?</p>
+  </div>
+  <div class="base"></div>
+</section>
+
+<section class="frame section" id="k07-section-transcript">
+  <header class="top"><span class="mark">khoj</span><span class="progress"><i></i><i></i><i></i><i></i><i class="on"></i><i></i></span></header>
+  <div class="stack" style="top: 330px">
+    <div class="kicker">05 · Transcript</div>
+    <h1 class="h">Read the whole conversation.</h1>
+    <p class="sub">Every answer traces back to what the broker actually said.</p>
+  </div>
+  <div class="base"></div>
+</section>
+
+<section class="frame section" id="k08-section-live">
+  <header class="top"><span class="mark">khoj</span><span class="progress"><i></i><i></i><i></i><i></i><i></i><i class="on"></i></span></header>
+  <div class="stack" style="top: 330px">
+    <div class="kicker">06 · Live video</div>
+    <h1 class="h">Live from the property.</h1>
+    <p class="sub">The broker streams from their phone, with location on.</p>
+  </div>
+  <div class="base"></div>
+</section>
+
+<!-- k09 · what verified means ------------------------------------------ -->
+<section class="frame" id="k09-badge-meaning">
+  <header class="top"><span class="mark">khoj</span></header>
+  <div class="stack" style="top: 200px">
+    <div class="kicker">What Verified means</div>
+    <div style="margin-top: 36px">
+      <span class="badge"><span class="tick"><svg><use href="#tick"/></svg></span>Khoj Verified</span>
+    </div>
+    <ul class="rows">
+      <li><svg><use href="#tick"/></svg>A live video, not an upload</li>
+      <li><svg><use href="#tick"/></svg>Recorded near this address</li>
+      <li><svg><use href="#tick"/></svg>At around the agreed time</li>
+    </ul>
+    <p class="caveat">It is not a guarantee about the flat itself.</p>
+  </div>
+  <div class="base"></div>
+</section>
+
+<!-- k10 · split-screen frame for the live-video clip ------------------- -->
+<section class="frame" id="k10-split-frame">
+  <div class="zone-label" style="left: 96px; top: 110px">Dashboard</div>
+  <div class="zone dash">16 : 9</div>
+  <div class="link"><span class="link-label"><i></i>Live</span><b></b></div>
+  <div class="zone-label" style="left: 1513px; top: 110px">Broker’s phone</div>
+  <div class="zone phone">9 : 19.5</div>
+  <div class="base"></div>
+</section>
+
+<!-- k11–k15 · lower-thirds, transparent -------------------------------- -->
+<section class="frame clear" id="k11-lt-search-speed">
+  <div class="lt">Real search<span class="dot">·</span>sped up 4×</div>
+</section>
+
+<section class="frame clear" id="k12-lt-call-real">
+  <div class="lt">Real AI call<span class="dot">·</span>recorded earlier</div>
+</section>
+
+<section class="frame clear" id="k13-lt-transcript">
+  <div class="lt">Full transcript<span class="dot">·</span>exactly as said</div>
+</section>
+
+<section class="frame clear" id="k14-lt-live-gps">
+  <div class="lt">Live stream<span class="dot">·</span>location on</div>
+</section>
+
+<section class="frame clear" id="k15-lt-distance">
+  <div class="lt">Distance measured from the phone’s location</div>
+</section>
+
+<!-- k16 · end card ----------------------------------------------------- -->
+<section class="frame" id="k16-end">
+  <div class="stack" style="top: 230px">
+    <div class="hero-mark">khoj</div>
+    <p class="end-line">Where families belong.</p>
+    <div class="end-url">khoj-beta.vercel.app</div>
+    <div class="hero-rule"></div>
+    <div class="kicker">Team Khoj</div>
+  </div>
+  <div class="base"></div>
+</section>
+
+<!-- k17–k18 · YouTube thumbnails ------------------------------------------ -->
+<section class="frame thumb" id="k17-thumb-A">
+  <svg class="t-art" data-deco><use href="#tick-ring"/></svg>
+  <span class="t-mark">khoj</span>
+  <div class="t-stack">
+    <span class="badge"><span class="tick"><svg><use href="#tick"/></svg></span>Khoj Verified</span>
+    <h1 class="t-h"><span class="gold">Verified</span> before<br>you visit.</h1>
+  </div>
+</section>
+
+<section class="frame thumb dark" id="k18-thumb-B">
+  <svg class="t-art" data-deco><use href="#tick-ring"/></svg>
+  <span class="t-mark">khoj</span>
+  <div class="t-stack">
+    <span class="badge"><span class="tick"><svg><use href="#tick"/></svg></span>Khoj Verified</span>
+    <h1 class="t-h"><span class="gold">Verified</span> before<br>you visit.</h1>
+  </div>
+</section>
+
+</body>
+</html>

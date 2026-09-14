@@ -171,6 +171,10 @@ class HttpPage:
     url: str
     status: int
     text: str
+    #: The markup as served. Flattening keeps the words and loses the attributes
+    #: a listing's own link and photograph live in, so a reader that works
+    #: without the AI extractor needs this rather than ``text``.
+    html: str = ""
 
     @property
     def looks_like_listings(self) -> bool:
@@ -221,4 +225,9 @@ async def fetch_page(url: str, *, timeout_s: float | None = None) -> HttpPage | 
         return None
 
     final = str(response.url)
-    return HttpPage(url=final, status=response.status_code, text=html_to_text(response.text, final))
+    return HttpPage(
+        url=final,
+        status=response.status_code,
+        text=html_to_text(response.text, final),
+        html=response.text,
+    )

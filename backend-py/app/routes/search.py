@@ -267,6 +267,11 @@ async def list_history(
             {
                 "session_id": x.id,
                 "prompt": x.prompt,
+                # Named by place, not by prompt. The prompt is the whole setup
+                # questionnaire ("Food preference? Veg. Are you renting…"), so a
+                # list labelled by it shows every search as the same search.
+                "city": x.criteria.city,
+                "localities": x.criteria.localities,
                 "status": x.status.value,
                 "error": x.error,
                 "listings_found": x.listings_found,

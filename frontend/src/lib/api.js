@@ -263,6 +263,14 @@ export const getCallHistory = (limit = 50) =>
   request(`/api/calls/history?limit=${limit}`);
 
 /**
+ * GET /api/sessions — this account's past searches, newest first.
+ *
+ * A summary per search; the listings stay behind getResults. Empty for anyone
+ * the server cannot identify, by design.
+ */
+export const getSearchHistory = (limit = 8) => request(`/api/sessions?limit=${limit}`);
+
+/**
  * POST /api/session/{id}/call-all — start dialling, cheapest first.
  *
  * `listingId` narrows it to one property. The results view offers a call per

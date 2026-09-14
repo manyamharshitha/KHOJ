@@ -180,6 +180,17 @@ export function toRunCard(result) {
       quote: d.quote ?? null,
       severity: d.severity ?? 'moderate',
     })),
+    // The whole conversation, turn by turn. CALL-E returns a transcript and no
+    // audio, so this — not a recording — is the evidence behind every answer
+    // above: a customer who doubts "rent is 30,000" can read the broker say it.
+    // `agent` is Khoj's side of the call; `owner` is whoever picked up.
+    transcript: (Array.isArray(call?.transcript) ? call.transcript : [])
+      .filter((t) => t && typeof t.text === 'string' && t.text.trim())
+      .map((t) => ({
+        who: t.speaker === 'agent' ? 'agent' : 'broker',
+        text: t.text.trim(),
+        at: Number.isFinite(t.timestamp) ? t.timestamp : null,
+      })),
     audioUrl: call?.audio_url ?? null,
     recordingConsent: call?.consent_to_record ?? null,
 

@@ -448,7 +448,10 @@ const Onboarding = ({ firstName, onComplete, onSkip }) => {
           {stage === 'welcome' && (
             <>
               <Kicker>Welcome to Khoj</Kicker>
-              <Heading>Hey {firstName}, 10 quick questions.</Heading>
+              {/* Not a number. It said "10" above a counter reading "of 11",
+                  and a hard-coded count goes stale the next time a question is
+                  added or removed. */}
+              <Heading>Hey {firstName}, a few quick questions.</Heading>
               <Sub>
                 This is what Khoj checks before it calls a broker. Takes less than 5 minutes — we'll show you
                 around the dashboard right after.
