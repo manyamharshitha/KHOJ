@@ -80,6 +80,56 @@ def _revocation_checked() -> bool:
     return available
 
 
+@lru_cache(maxsize=1)
+def _cert_session():  # type: ignore[no-untyped-def]  # requests session, untyped
+    """One HTTP session for Google's signing certificates, honouring their cache headers.
+
+    The certificates change every few hours and say so in ``Cache-Control``; a
+    plain session would download them again on every sign-in.
+    """
+    import cachecontrol
+    import requests
+
+    return cachecontrol.CacheControl(requests.Session())
+
+
+def _verify_without_credentials(token: str) -> dict[str, Any]:
+    """Verify a Firebase ID token with nothing but the project id.
+
+    A Firebase ID token is a JWT signed with Google's published keys. Checking
+    it needs those public keys and the project id — no service account, and no
+    Google "application default credentials". The Admin SDK asks for the latter
+    even when it will not use them, and Render has none: with the key file not
+    found there, every sign-in failed with DefaultCredentialsError and every
+    signed-in customer was saved as anonymous.
+    """
+    import inspect
+
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token as google_id_token
+
+    project = settings.firebase_project_id
+    if not project:
+        raise RuntimeError("FIREBASE_PROJECT_ID is not set, so no token can be verified")
+
+    kwargs: dict[str, Any] = {}
+    if "clock_skew_in_seconds" in inspect.signature(google_id_token.verify_firebase_token).parameters:
+        kwargs["clock_skew_in_seconds"] = 10  # a few seconds of drift is not an attack
+
+    claims = google_id_token.verify_firebase_token(
+        token, google_requests.Request(session=_cert_session()), audience=project, **kwargs
+    )
+    # Audience, signature and expiry are checked by the call above. Issuer and
+    # subject are the rest of Firebase's own rules for an ID token.
+    if not claims or claims.get("iss") != f"https://securetoken.google.com/{project}":
+        raise ValueError("Token has the wrong issuer.")
+    subject = claims.get("sub")
+    if not isinstance(subject, str) or not subject or len(subject) > 128:
+        raise ValueError("Token has no valid subject.")
+    claims["uid"] = subject
+    return claims
+
+
 def verify_google_token(id_token: str) -> dict[str, Any]:
     """Verify a Firebase ID token and return its claims.
 
@@ -95,6 +145,23 @@ def verify_google_token(id_token: str) -> dict[str, Any]:
     if not token:
         log.warning("auth: no token supplied")
         raise AuthError()
+
+    # The normal path: no revocation lookup, so no credentials are involved.
+    if not _revocation_checked():
+        try:
+            return _verify_without_credentials(token)
+        except RuntimeError as exc:
+            log.error("auth: cannot verify tokens — %s", exc)
+            raise AuthError("Sign-in is not configured on this server.") from exc
+        except ValueError as exc:
+            reason = str(exc)
+            if "expired" in reason.lower():
+                raise AuthError("That session has expired. Sign in again.") from exc
+            log.warning("auth: token rejected — %s", reason[:200])
+            raise AuthError("That sign-in could not be verified.") from exc
+        except Exception as exc:  # noqa: BLE001 - e.g. the certificates could not be fetched
+            log.warning("auth: token rejected — %s: %s", type(exc).__name__, str(exc)[:200])
+            raise AuthError("That sign-in could not be verified.") from exc
 
     try:
         # ``app=`` explicitly. Without it the SDK looks for a default app that

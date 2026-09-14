@@ -104,8 +104,9 @@ def _app() -> firebase_admin.App:
         # revocation check, which is what the file is actually for.
         log.error(
             "firebase: FIREBASE_CREDENTIALS_FILE is %r, and no such file exists there "
-            "or under %s. Sign-in still works against the project id, without a "
-            "revocation check. Point it at the mounted file, e.g. /etc/secrets/<name>.",
+            "or under %s. Sign-in does not need it (tokens are verified against "
+            "Google's public keys and the project id); the revocation lookup and "
+            "Storage do. Point it at the mounted file, e.g. /etc/secrets/<name>.",
             configured,
             ", ".join(str(d) for d in SECRET_DIRS),
         )
