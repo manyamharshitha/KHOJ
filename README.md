@@ -27,7 +27,7 @@ Built for the [Call-e](https://call-e.devpost.com/) hackathon, on Call-e's voice
 
 **Live:** [khoj-beta.vercel.app](https://khoj-beta.vercel.app)
 
-**Video:** *link added once uploaded*
+**Video:** *https://www.youtube.com/watch?v=GNaT6THERlk*
 
 ---
 
