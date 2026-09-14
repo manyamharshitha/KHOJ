@@ -1,41 +1,50 @@
 /**
  * The walkthrough video on the home page.
  *
- * The video lives on YouTube, never in this repository or on Vercel. A few
- * minutes of 1080p is tens to hundreds of megabytes; committed, it bloats every
- * clone for good, and deployed, it counts against the build and is served by a
- * CDN that was not built for streaming. YouTube streams at whatever bitrate the
- * viewer's connection can hold, which is the whole problem solved elsewhere.
+ * The video is served from the site itself (public/media), compressed to 720p
+ * with its index at the front of the file, so it starts playing before the
+ * whole ~5 MB has arrived and Vercel serves it with range requests like any
+ * other static file.
  *
- * The link comes from VITE_DEMO_VIDEO_URL, so replacing the video is a setting
- * in Vercel and a redeploy — no code change. Until it is set, or if it is not a
- * YouTube link, the "coming soon" frame stays exactly as it was: a malformed
- * value must never produce a broken player on the landing page.
+ * Nothing downloads until someone presses play. preload="none" means the page
+ * fetches only the poster image; on a landing page most visitors scroll past,
+ * so the video should cost them nothing. The frame is the play button — a big
+ * target, one tab stop — and the native controls appear once it has started.
  *
- * Nothing from YouTube loads until someone presses play. The embedded player
- * pulls in roughly a megabyte of script and a pile of third-party requests; on
- * a landing page most visitors scroll past, that is a slower first paint for
- * everybody to benefit the few who watch. So the page shows a still thumbnail
- * and a real button, and swaps in the player on click — from the no-cookie
- * domain, so an unplayed video sets nothing in the visitor's browser.
+ * The frame keeps a 16:9 shape at every width, so the video fills a phone
+ * screen edge to edge and caps at 1100px on a desktop. playsInline stops iOS
+ * from forcing fullscreen the moment it starts.
+ *
+ * If VITE_DEMO_VIDEO_URL holds a YouTube link, a "Watch on YouTube" link sits
+ * under the player for anyone who would rather watch it there.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import styled from 'styled-components';
 import ScrollReveal from '../ui/ScrollReveal';
 import { youtubeId } from '../../lib/youtube';
 
-const VIDEO_ID = youtubeId(import.meta.env.VITE_DEMO_VIDEO_URL);
+const VIDEO_SRC = '/media/khoj-walkthrough.mp4';
+const POSTER_SRC = '/media/khoj-walkthrough-poster.jpg';
+const YOUTUBE_ID = youtubeId(import.meta.env.VITE_DEMO_VIDEO_URL);
 
 const Wrap = styled.section`
   padding: 2rem 6vw 7rem;
   background: ${({ theme }) => theme.bg};
+
+  @media (max-width: 760px) {
+    padding: 1.5rem 4vw 4.5rem;
+  }
 `;
 
 const Head = styled.div`
   max-width: 560px;
   margin: 0 auto 2.25rem;
   text-align: center;
+
+  @media (max-width: 760px) {
+    margin-bottom: 1.5rem;
+  }
 `;
 
 const LabelRow = styled.div`
@@ -63,7 +72,7 @@ const Label = styled.span`
 const Title = styled.h2`
   font-family: 'Fraunces', Georgia, serif;
   font-weight: 400;
-  font-size: clamp(1.6rem, 2.8vw, 2.15rem);
+  font-size: clamp(1.35rem, 2.8vw, 2.15rem);
   line-height: 1.2;
   letter-spacing: -0.02em;
   margin: 0;
@@ -81,21 +90,18 @@ const Frame = styled.div`
   position: relative;
   background: ${({ theme }) => (theme.name === 'dark' ? theme.surface2 : theme.bgAlt)};
 
-  iframe {
+  video {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    border: 0;
+    object-fit: contain;
+    display: block;
   }
-`;
 
-const Pattern = styled.div`
-  position: absolute;
-  inset: 0;
-  background-image: radial-gradient(${({ theme }) => theme.rule2} 1px, transparent 1px);
-  background-size: 28px 28px;
-  opacity: 0.6;
+  @media (max-width: 760px) {
+    border-radius: 6px;
+  }
 `;
 
 const Center = styled.div`
@@ -106,6 +112,10 @@ const Center = styled.div`
   align-items: center;
   justify-content: center;
   gap: 1.1rem;
+
+  @media (max-width: 760px) {
+    gap: 0.7rem;
+  }
 `;
 
 const PlayButton = styled.div`
@@ -126,10 +136,20 @@ const PlayButton = styled.div`
     margin-left: 2px;
     fill: ${({ theme }) => theme.ink};
   }
+
+  @media (max-width: 760px) {
+    width: 3rem;
+    height: 3rem;
+
+    svg {
+      width: 12px;
+      height: 12px;
+    }
+  }
 `;
 
-/** The whole frame is the button: a bigger target, and one tab stop. */
-const Poster = styled.button`
+/** Covers the video until the first play, so the whole frame is the button. */
+const Cover = styled.button`
   position: absolute;
   inset: 0;
   width: 100%;
@@ -138,20 +158,13 @@ const Poster = styled.button`
   cursor: pointer;
   background: transparent;
 
-  img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  /* Darken the thumbnail just enough for the button to read on any frame. */
+  /* The poster is a light title card, so only a faint shade; the caption
+     carries its own dark pill to stay readable on any frame. */
   &::after {
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, rgba(10, 12, 14, 0.05), rgba(10, 12, 14, 0.35));
+    background: linear-gradient(180deg, rgba(10, 12, 14, 0), rgba(10, 12, 14, 0.12));
   }
 
   ${Center} {
@@ -169,17 +182,20 @@ const Poster = styled.button`
   }
 `;
 
-const Caption = styled.span`
+const OnCover = styled.span`
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.7rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: ${({ theme }) => theme.muted};
-`;
-
-const OnPoster = styled(Caption)`
   color: #f4f6f8;
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+  background: rgba(17, 17, 16, 0.78);
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+
+  @media (max-width: 760px) {
+    font-size: 0.58rem;
+    padding: 0.35rem 0.7rem;
+  }
 `;
 
 const Below = styled.p`
@@ -207,7 +223,16 @@ const PlayIcon = () => (
 );
 
 const ProductDemo = () => {
-  const [playing, setPlaying] = useState(false);
+  const videoRef = useRef(null);
+  const [started, setStarted] = useState(false);
+
+  // play() is called inside the click, so mobile browsers count it as the
+  // user's own gesture and allow sound. A refused play still reveals the
+  // native controls, so the visitor can press play there instead.
+  const start = () => {
+    setStarted(true);
+    videoRef.current?.play().catch(() => {});
+  };
 
   return (
     <Wrap id="demo">
@@ -221,55 +246,33 @@ const ProductDemo = () => {
       </Head>
       <ScrollReveal>
         <Frame>
-          {!VIDEO_ID && (
-            <>
-              <Pattern />
+          <video
+            ref={videoRef}
+            src={VIDEO_SRC}
+            poster={POSTER_SRC}
+            preload="none"
+            playsInline
+            controls={started}
+            onPlay={() => setStarted(true)}
+            aria-label="Khoj walkthrough video"
+          >
+            Your browser can’t play this video.
+          </video>
+          {!started && (
+            <Cover type="button" onClick={start} aria-label="Play the Khoj walkthrough video">
               <Center>
                 <PlayButton>
                   <PlayIcon />
                 </PlayButton>
-                <Caption>Walkthrough video — coming soon</Caption>
+                <OnCover>Watch the walkthrough · 3 min</OnCover>
               </Center>
-            </>
-          )}
-
-          {VIDEO_ID && !playing && (
-            <Poster type="button" onClick={() => setPlaying(true)} aria-label="Play the Khoj walkthrough video">
-              <Pattern />
-              <img
-                src={`https://i.ytimg.com/vi/${VIDEO_ID}/hqdefault.jpg`}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                // A blocked or missing thumbnail leaves the dotted frame and
-                // the button, not a broken-image glyph.
-                onError={(e) => {
-                  e.currentTarget.hidden = true;
-                }}
-              />
-              <Center>
-                <PlayButton>
-                  <PlayIcon />
-                </PlayButton>
-                <OnPoster>Watch the walkthrough</OnPoster>
-              </Center>
-            </Poster>
-          )}
-
-          {VIDEO_ID && playing && (
-            <iframe
-              src={`https://www.youtube-nocookie.com/embed/${VIDEO_ID}?autoplay=1&rel=0`}
-              title="Khoj walkthrough video"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              referrerPolicy="strict-origin-when-cross-origin"
-              allowFullScreen
-            />
+            </Cover>
           )}
         </Frame>
       </ScrollReveal>
-      {VIDEO_ID && (
+      {YOUTUBE_ID && (
         <Below>
-          <a href={`https://www.youtube.com/watch?v=${VIDEO_ID}`} target="_blank" rel="noopener noreferrer">
+          <a href={`https://www.youtube.com/watch?v=${YOUTUBE_ID}`} target="_blank" rel="noopener noreferrer">
             Watch on YouTube ↗
           </a>
         </Below>
