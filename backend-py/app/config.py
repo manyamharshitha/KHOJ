@@ -87,6 +87,15 @@ class Settings(BaseSettings):
     firebase_project_id: str = ""
     #: Storage bucket for call recordings, e.g. ``my-project.appspot.com``.
     firebase_storage_bucket: str = ""
+    #: Also ask Firebase, on every signed-in request, whether the token has been
+    #: revoked. Off by default: it is a network round trip per request on a
+    #: single-worker instance, and when it was on, slow answers stalled every
+    #: other request — health checks included — until the platform restarted
+    #: the service. Signature, audience and expiry are verified either way.
+    firebase_check_revoked: bool = False
+    #: Longest any single Firebase network call may take. The SDK's default is
+    #: 120 seconds.
+    firebase_http_timeout_s: float = 8.0
 
     # --- llm -------------------------------------------------------------
     #: Which provider is tried first. "anthropic" falls back to Gemini on
@@ -437,6 +446,8 @@ class Settings(BaseSettings):
 
     # --- auth ------------------------------------------------------------
     auth_required: bool = False
+    #: Longest a sign-in verification may take before the request gives up on it.
+    auth_verify_timeout_s: float = 10.0
     #: Fixed bearer token accepted as a session, for automated tests only.
     dev_auth_token: str = ""
 

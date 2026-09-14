@@ -12,6 +12,7 @@ kind of token, so they are all one code path.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from functools import lru_cache
 from typing import Annotated, Any
@@ -60,6 +61,13 @@ def _revocation_checked() -> bool:
     every authenticated request, and a warning repeated per request buries the
     startup lines that explain how to fix it.
     """
+    if not settings.firebase_check_revoked:
+        log.info(
+            "auth: revocation check off (FIREBASE_CHECK_REVOKED) — signature, "
+            "audience and expiry are verified; a signed-out token stays valid "
+            "until it expires, up to an hour."
+        )
+        return False
     available = has_service_credential()
     if not available:
         log.warning(
@@ -195,7 +203,23 @@ async def current_user(
             listings_used=0,
         )
 
-    claims = verify_google_token(token)
+    # In a worker thread, and bounded. The Admin SDK is synchronous and can make
+    # network calls — Google's signing certificates, and the revocation lookup
+    # when that is on. Called directly, each one froze the only event loop this
+    # process has: every other request, the platform's health check among them,
+    # waited behind it, the check failed, and the service was restarted while
+    # people were using it.
+    try:
+        claims = await asyncio.wait_for(
+            asyncio.to_thread(verify_google_token, token),
+            timeout=settings.auth_verify_timeout_s,
+        )
+    except (TimeoutError, asyncio.TimeoutError) as exc:
+        log.warning(
+            "auth: token verification took longer than %.0fs — treated as unverified",
+            settings.auth_verify_timeout_s,
+        )
+        raise AuthError("That sign-in could not be verified in time.") from exc
     return await get_or_create_user(
         uid=claims["uid"],
         email=claims.get("email"),

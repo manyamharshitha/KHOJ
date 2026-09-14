@@ -79,6 +79,9 @@ def _app() -> firebase_admin.App:
         options["storageBucket"] = settings.firebase_storage_bucket
     if settings.firebase_project_id:
         options["projectId"] = settings.firebase_project_id
+    # Bounded. The SDK waits up to two minutes by default, and its calls are
+    # synchronous — a slow Google endpoint must cost a request, not the worker.
+    options["httpTimeout"] = settings.firebase_http_timeout_s
 
     configured = settings.firebase_credentials_file
     path = credentials_path()
